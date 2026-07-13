@@ -18,19 +18,26 @@ geen abonnement. Je data blijft op je eigen computer.
 - **Installeerbaar als app (PWA)** — draait offline in een eigen venster op Mac, Windows,
   iPhone en Android.
 
-## Zo start je
+## De app staat live
 
-1. **Snelste manier:** dubbelklik op `index.html` — hij opent meteen in je browser.
-2. **Als app installeren (aanbevolen):** start een kleine lokale server zodat de app offline
-   installeerbaar wordt. Open een Terminal in deze map en voer uit:
+**➡️ <https://ahmed-132.github.io/tradejournal/>**
 
-   ```bash
-   python3 -m http.server 8137
-   ```
+Deze link werkt overal en is de app zelf. Elke wijziging die naar de `main`-branch wordt
+gepusht, staat na ~1 minuut automatisch live.
 
-   Ga daarna in je browser naar <http://localhost:8137>. In Chrome/Edge zie je rechts in de
-   adresbalk een **installeer-icoon** (⊕) — klik erop om TradeJournal als losse app te
-   installeren. Op iPhone: Safari → Deel-knop → "Zet op beginscherm".
+### Op je iPhone installeren (werkt daarna altijd + offline)
+
+1. Open de link hierboven in **Safari** (moet Safari zijn).
+2. Tik onderaan op de **Deel-knop** (vierkantje met pijl omhoog).
+3. Tik op **"Zet op beginscherm"** → **Voeg toe**.
+4. Je hebt nu een app-icoon. Het opent in een eigen venster (zonder browserbalk), met een
+   onderbalk om te navigeren, en werkt **offline — je Mac hoeft niet aan te staan**.
+
+### Op de computer
+
+Dubbelklik op `index.html` om lokaal te openen, of gebruik gewoon de live-link. In
+Chrome/Edge kun je via het **installeer-icoon** (⊕) rechts in de adresbalk de app ook op je
+bureaublad installeren.
 
 ## Trades invoeren
 

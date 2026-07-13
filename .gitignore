@@ -1,10 +1,15 @@
 # Dependencies
 node_modules/
 
+# Capacitor generated web bundle (rebuilt by `npm run build:www`)
+www/
+
 # Capacitor / iOS build artifacts
 ios/App/Pods/
 ios/App/build/
 ios/App/App/public/
+ios/App/.swiftpm/
+**/xcuserdata/
 *.xcuserstate
 DerivedData/
 
