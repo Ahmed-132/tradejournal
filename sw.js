@@ -3,8 +3,9 @@
    - Navigations (the HTML page): network-first, fall back to cache when offline.
      This guarantees updates show up while online, yet the app still opens offline.
    - Static assets (css/js/icons): cache-first for speed, updated in the background. */
-const CACHE = 'tradejournal-v3';
-const CORE = ['./', './index.html', './styles.css?v=2', './app.js?v=2', './manifest.webmanifest', './assets/icon.svg'];
+const CACHE = 'tradejournal-v4';
+const CORE = ['./', './index.html', './styles.css?v=2', './app.js?v=2', './manifest.webmanifest',
+  './assets/icon.svg', './assets/apple-touch-icon.png', './assets/icon-192.png', './assets/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
