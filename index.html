@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b0e14" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="assets/icon.svg" />
+  <title>TradeJournal — Live Trading Journal</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">TJ</div>
+        <div class="brand-name">TradeJournal</div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard">
+          <span class="ic">◧</span><span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="trades">
+          <span class="ic">≣</span><span>Trades</span>
+        </button>
+        <button class="nav-item" data-view="calendar">
+          <span class="ic">▦</span><span>Kalender</span>
+        </button>
+        <button class="nav-item" data-view="import">
+          <span class="ic">⇪</span><span>Importeren</span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <button class="btn btn-primary btn-block" id="addTradeBtn">+ Trade toevoegen</button>
+        <button class="btn btn-ghost btn-block" id="settingsBtn">Instellingen</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="viewTitle">Dashboard</h1>
+          <p id="viewSubtitle" class="muted">Overzicht van je handelsprestaties</p>
+        </div>
+        <div class="topbar-actions">
+          <select id="accountFilter" class="input input-sm" title="Account"></select>
+          <select id="rangeFilter" class="input input-sm">
+            <option value="all">Alle tijd</option>
+            <option value="30">Laatste 30 dagen</option>
+            <option value="90">Laatste 90 dagen</option>
+            <option value="ytd">Dit jaar</option>
+          </select>
+        </div>
+      </header>
+
+      <div id="views">
+        <section class="view" data-view="dashboard"></section>
+        <section class="view hidden" data-view="trades"></section>
+        <section class="view hidden" data-view="calendar"></section>
+        <section class="view hidden" data-view="import"></section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal root -->
+  <div id="modalRoot"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
