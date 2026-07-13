@@ -1,6 +1,6 @@
 /* Minimal offline cache so the app works as an installed PWA */
 const CACHE = 'tradejournal-v2';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './assets/icon.svg'];
+const ASSETS = ['./', './index.html', './styles.css?v=2', './app.js?v=2', './manifest.webmanifest', './assets/icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
