@@ -119,6 +119,7 @@
 
   function switchView(name) {
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+    $$('.tab[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === name));
     $$('.view').forEach(v => v.classList.toggle('hidden', v.dataset.view !== name));
     $('#viewTitle').textContent = VIEW_META[name][0];
     $('#viewSubtitle').textContent = VIEW_META[name][1];
@@ -888,6 +889,8 @@
 
   // ---------- Wire up ----------
   $$('.nav-item').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
+  $$('.tab[data-view]').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
+  $('#addTradeTab')?.addEventListener('click', () => openTradeModal(null));
   $('#addTradeBtn').addEventListener('click', () => openTradeModal(null));
   $('#settingsBtn').addEventListener('click', openSettings);
   $('#rangeFilter').addEventListener('change', renderAll);

@@ -1,5 +1,5 @@
 /* Minimal offline cache so the app works as an installed PWA */
-const CACHE = 'tradejournal-v1';
+const CACHE = 'tradejournal-v2';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './assets/icon.svg'];
 
 self.addEventListener('install', e => {

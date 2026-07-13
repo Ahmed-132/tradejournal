@@ -224,6 +224,32 @@ tbody tr:hover .row-actions { opacity: 1; }
   font-size: 13.5px; font-weight: 600; animation: pop .16s ease;
 }
 
+/* ---------- Mobile bottom tab bar ---------- */
+.tabbar { display: none; }
+@media (max-width: 860px) {
+  .tabbar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+    background: rgba(11,14,20,0.92); backdrop-filter: blur(14px);
+    border-top: 1px solid var(--border);
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    justify-content: space-around; align-items: flex-end;
+  }
+  .tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    background: none; border: none; color: var(--muted-2); cursor: pointer;
+    font-size: 10.5px; font-weight: 600; font-family: inherit; padding: 6px 2px;
+  }
+  .tab .tab-ic { font-size: 19px; line-height: 1; }
+  .tab.active { color: var(--brand-2); }
+  .tab-add { flex: 0 0 auto; }
+  .tab-add .tab-plus {
+    display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 2px;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #fff;
+    border-radius: 15px; font-size: 26px; font-weight: 400; line-height: 1;
+    box-shadow: 0 6px 18px rgba(109,94,252,0.45);
+  }
+}
+
 .section-gap { margin-top: 24px; }
 .flex { display: flex; }
 .between { justify-content: space-between; }
@@ -234,6 +260,14 @@ tbody tr:hover .row-actions { opacity: 1; }
 @media (max-width: 860px) {
   #app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .two-col { grid-template-columns: 1fr; }
+  .topbar { padding: max(16px, env(safe-area-inset-top)) 18px 14px; }
+  .topbar h1 { font-size: 20px; }
+  #views { padding: 18px 18px 96px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .cal-cell { min-height: 58px; padding: 5px; }
+  .cal-cell .day-pnl { font-size: 11px; }
+  .cal-cell .day-trades { display: none; }
+  .modal { max-height: 92vh; }
 }

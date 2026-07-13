@@ -2,7 +2,10 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="TradeJournal" />
   <meta name="theme-color" content="#0b0e14" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
@@ -64,6 +67,15 @@
       </div>
     </main>
   </div>
+
+  <!-- Mobile bottom tab bar -->
+  <nav class="tabbar">
+    <button class="tab active" data-view="dashboard"><span class="tab-ic">◧</span><span>Dashboard</span></button>
+    <button class="tab" data-view="trades"><span class="tab-ic">≣</span><span>Trades</span></button>
+    <button class="tab tab-add" id="addTradeTab"><span class="tab-plus">+</span></button>
+    <button class="tab" data-view="calendar"><span class="tab-ic">▦</span><span>Kalender</span></button>
+    <button class="tab" data-view="import"><span class="tab-ic">⇪</span><span>Import</span></button>
+  </nav>
 
   <!-- Modal root -->
   <div id="modalRoot"></div>
