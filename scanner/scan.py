@@ -48,7 +48,7 @@ NASDAQ_LIST = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt"
 
 STABLECOINS = {
     "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "PAX", "EUR", "EURI", "AEUR",
-    "GBP", "USDE", "XUSD", "BFUSD", "USD1", "RLUSD", "PYUSD", "UST", "USDS",
+    "GBP", "USDE", "XUSD", "BFUSD", "USD1", "RLUSD", "PYUSD", "UST", "USDS", "U",
 }
 TV_EXCHANGE = {"Q": "NASDAQ", "N": "NYSE", "A": "AMEX", "P": "AMEX", "Z": "CBOE"}
 JUNK_NAME = re.compile(
