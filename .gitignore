@@ -21,3 +21,6 @@ DerivedData/
 
 # Intermediate icon build output
 assets/generated/
+
+# scanner state (wordt bewaard in GitHub Actions cache)
+scanner/state.json
