@@ -356,13 +356,11 @@ def fmt_vol(x: float) -> str:
 def format_signal(s: dict) -> str:
     chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval=" + \
         {"4h": "240", "1d": "D"}[s["tf"]]
-    symbol_page = f"https://www.tradingview.com/symbols/{s['tv'].replace(':', '-')}/"
     ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
     return (f"🔔 <code>{ticker}</code> HH + HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
             f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}) · "
             f"HL {fmt(s['hl'])} (vorige {fmt(s['prev_l'])})\n"
-            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a> · "
-            f"<a href=\"{symbol_page}\">App</a>")
+            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>")
 
 
 def send_telegram(messages: list[str]) -> None:

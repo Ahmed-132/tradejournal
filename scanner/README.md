@@ -12,7 +12,7 @@ Scant elk uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle crypto
 - Stocks 4h: tijdens beurstijden. Stocks daily + filter: één keer per dag na de slotbel.
 - Je krijgt één melding per nieuwe uptrend (niet bij elke nieuwe HH).
 - Meldingen staan gesorteerd op dagvolume in dollar, hoogste eerst.
-- Tik op de ticker om hem te kopiëren (plakken in de TradingView-zoekbalk), of gebruik de links *Chart* / *App*.
+- Tik op de ticker om hem te kopiëren (plakken in de TradingView-zoekbalk), of tik op *Chart* om de chart te openen.
 
 ## Instellen (eenmalig, ±5 min)
 
