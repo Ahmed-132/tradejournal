@@ -1,11 +1,15 @@
 # HH + HL trend scanner
 
-Scant elk uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle crypto USDT-paren op Binance** en **goud** (COMEX GC1!) op **4h en daily**, en stuurt een Telegram-melding zodra een ticker een nieuwe uptrend maakt: **Higher High + Higher Low**.
+Scant elk half uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle crypto USDT-paren op Binance** en **goud** (COMEX GC1!) op de timeframes die jij kiest (standaard **4h en daily**), en stuurt een Telegram-melding zodra een ticker een nieuwe uptrend maakt: **Higher High + Higher Low**.
 
-| Timeframe | Top/bodem bevestigd na |
-|---|---|
-| 4h | 2 candles |
-| 1D | 2 candles |
+## Timeframes aanpassen
+
+GitHub → repo → *Settings* → *Secrets and variables* → *Actions* → tabblad **Variables** → *New repository variable*:
+
+- Name: `TIMEFRAMES`
+- Value: timeframes met het aantal bevestigingscandles, gescheiden door komma's, bv. `4h:2,1d:2`
+
+Mogelijke timeframes: `1h`, `2h`, `4h`, `1d`, `1w`. Het getal na `:` is hoeveel candles links en rechts van een top/bodem nodig zijn (minder = sneller, meer = betrouwbaarder). Zonder variabele geldt `4h:2,1d:2`. De wijziging geldt vanaf de volgende run.
 
 - Crypto: Binance-data = exact dezelfde candles als `BINANCE:` op TradingView.
 - Stocks/goud: Yahoo Finance, 4h-candles opgebouwd zoals TradingView (9:30–13:30 en 13:30–16:00 New York-tijd).

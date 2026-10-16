@@ -2,7 +2,7 @@ name: HH-HL scanner
 
 on:
   schedule:
-    - cron: "5 * * * *" # elk uur, 5 min na het uur (candles zijn dan gesloten)
+    - cron: "1,31 * * * *" # reserve; cron-job.org start de scanner op :01 en :31
   workflow_dispatch:
 
 permissions:
@@ -39,6 +39,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TIMEFRAMES: ${{ vars.TIMEFRAMES }}
 
       - uses: actions/cache/save@v4
         if: always()

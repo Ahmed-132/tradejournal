@@ -1,7 +1,8 @@
 """HH + HL trend scanner voor US stocks, crypto (Binance) en goud.
 
-Draait elk uur (GitHub Actions) en stuurt een Telegram-bericht zodra een
-ticker een nieuwe uptrend maakt: Higher High + Higher Low op 4h of 1D.
+Draait elk half uur (GitHub Actions) en stuurt een Telegram-bericht zodra een
+ticker een nieuwe uptrend maakt: Higher High + Higher Low.
+Timeframes stel je in met de GitHub-variabele TIMEFRAMES (zie README).
 Meldingen staan gesorteerd op dagvolume in dollar (hoogste eerst).
 
 Gebruik:
@@ -29,8 +30,29 @@ import requests
 
 # ---------------------------------------------------------------- instellingen
 
-# Aantal candles links en rechts van een top/bodem om hem te bevestigen.
-PIVOT_LEN = {"4h": 2, "1d": 2}
+# Timeframes + aantal candles links en rechts om een top/bodem te bevestigen.
+# In te stellen via de omgevingsvariabele TIMEFRAMES, bv. "4h:2,1d:2".
+SUPPORTED_TF = ("1h", "2h", "4h", "1d", "1w")
+DEFAULT_TIMEFRAMES = "4h:2,1d:2"
+TV_INTERVAL = {"1h": "60", "2h": "120", "4h": "240", "1d": "D", "1w": "W"}
+
+
+def parse_timeframes(text: str) -> dict[str, int]:
+    out = {}
+    for part in (text or "").replace(" ", "").lower().split(","):
+        if not part:
+            continue
+        tf, _, n = part.partition(":")
+        tf = {"d": "1d", "w": "1w", "1day": "1d", "1week": "1w"}.get(tf, tf)
+        if tf not in SUPPORTED_TF:
+            print(f"Onbekende timeframe '{tf}' genegeerd (kies uit {', '.join(SUPPORTED_TF)})")
+            continue
+        out[tf] = max(1, min(10, int(n))) if n.isdigit() else 2
+    return out or parse_timeframes(DEFAULT_TIMEFRAMES)
+
+
+PIVOT_LEN = parse_timeframes(os.environ.get("TIMEFRAMES", ""))
+INTRADAY_HOURS = {tf: int(tf[:-1]) for tf in PIVOT_LEN if tf.endswith("h")}
 
 # Filter voor US stocks.
 MIN_PRICE = 5.0
@@ -221,18 +243,19 @@ def stock_1h(df: pd.DataFrame, now: datetime) -> pd.DataFrame:
     return closed_only(df, ends, now)
 
 
-def stock_4h(df1h: pd.DataFrame, now: datetime) -> pd.DataFrame:
-    """4h zoals TradingView: 9:30-13:30 en 13:30-16:00 (New York-tijd)."""
-    if df1h.empty:
+def stock_hours(df1h: pd.DataFrame, hours: int, now: datetime) -> pd.DataFrame:
+    """Nh-candles zoals TradingView: vanaf 9:30, laatste candle stopt om 16:00 (New York).
+    Bv. 4h = 9:30-13:30 en 13:30-16:00."""
+    if df1h.empty or hours == 1:
         return df1h
     day = df1h.index.normalize()
-    second = (df1h.index.hour * 60 + df1h.index.minute) >= 13 * 60 + 30
-    starts = pd.Series(day + pd.to_timedelta(
-        [13.5 if s else 9.5 for s in second], unit="h"), index=df1h.index)
-    df4 = aggregate(df1h, starts)
-    ends = pd.Series([s + pd.Timedelta(hours=4) if s.hour == 9 else
-                      s.normalize() + pd.Timedelta(hours=16) for s in df4.index], index=df4.index)
-    return closed_only(df4, ends, now)
+    slot = ((df1h.index.hour * 60 + df1h.index.minute) - 570) // (hours * 60)
+    starts = pd.Series(day + pd.Timedelta(minutes=570)
+                       + pd.to_timedelta(slot * hours, unit="h"), index=df1h.index)
+    df = aggregate(df1h, starts)
+    ends = pd.Series([min(s + pd.Timedelta(hours=hours), s.normalize() + pd.Timedelta(hours=16))
+                      for s in df.index], index=df.index)
+    return closed_only(df, ends, now)
 
 
 def stock_1d(df: pd.DataFrame, now: datetime) -> pd.DataFrame:
@@ -245,20 +268,34 @@ def gold_1h(df: pd.DataFrame, now: datetime) -> pd.DataFrame:
     return closed_only(df, pd.Series(df.index + pd.Timedelta(hours=1), index=df.index), now)
 
 
-def gold_4h(df1h: pd.DataFrame, now: datetime) -> pd.DataFrame:
-    """4h zoals TradingView COMEX: sessie start 18:00 ET -> 18, 22, 2, 6, 10, 14."""
-    if df1h.empty:
+def gold_hours(df1h: pd.DataFrame, hours: int, now: datetime) -> pd.DataFrame:
+    """Nh-candles zoals TradingView COMEX: sessie start 18:00 ET (4h -> 18, 22, 2, 6, 10, 14),
+    pauze 17:00-18:00."""
+    if df1h.empty or hours == 1:
         return df1h
-    starts = pd.Series((df1h.index - pd.Timedelta(hours=2)).floor("4h")
-                       + pd.Timedelta(hours=2), index=df1h.index)
-    df4 = aggregate(df1h, starts)
-    ends = pd.Series([s + pd.Timedelta(hours=3 if s.hour == 14 else 4)
-                      for s in df4.index], index=df4.index)
-    return closed_only(df4, ends, now)
+    offset = pd.Timedelta(hours=18 % hours)
+    starts = pd.Series((df1h.index - offset).floor(f"{hours}h") + offset, index=df1h.index)
+    df = aggregate(df1h, starts)
+    ends = []
+    for s in df.index:
+        end = s + pd.Timedelta(hours=hours)
+        pause = s.normalize() + pd.Timedelta(hours=17)
+        ends.append(pause if s < pause < end else end)
+    return closed_only(df, pd.Series(ends, index=df.index), now)
 
 
 def gold_1d(df: pd.DataFrame, now: datetime) -> pd.DataFrame:
     ends = pd.Series(df.index.normalize() + pd.Timedelta(hours=17), index=df.index)
+    return closed_only(df, ends, now)
+
+
+def weekly(df1d: pd.DataFrame, close_hour: int, now: datetime) -> pd.DataFrame:
+    """Weekcandles (maandag t/m vrijdag) uit gesloten daily candles."""
+    if df1d.empty:
+        return df1d
+    monday = df1d.index.normalize() - pd.to_timedelta(df1d.index.weekday, unit="D")
+    df = aggregate(df1d, pd.Series(monday, index=df1d.index))
+    ends = pd.Series(df.index + pd.Timedelta(days=4, hours=close_hour), index=df.index)
     return closed_only(df, ends, now)
 
 
@@ -285,7 +322,7 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
     """Bouwt het universum (prijs/volume-filter) en zoekt daily-signalen."""
     candidates = stock_candidates()
     log(f"Stocks: {len(candidates)} kandidaten, daily data ophalen...")
-    frames = yahoo_download(list(candidates), "1y", "1d")
+    frames = yahoo_download(list(candidates), "2y" if "1w" in PIVOT_LEN else "1y", "1d")
     universe, signals = {}, []
     for t, df in frames.items():
         df = stock_1d(df, now)
@@ -295,10 +332,16 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
             continue
         universe[t] = {**candidates[t],
                        "vol": float((df["close"] * df["volume"]).tail(20).mean())}
-        sig = find_signal(df, PIVOT_LEN["1d"])
-        if sig:
-            sig.update(tf="1d", **universe[t])
-            signals.append(sig)
+        sets = []
+        if "1d" in PIVOT_LEN:
+            sets.append(("1d", df))
+        if "1w" in PIVOT_LEN:
+            sets.append(("1w", weekly(df, 16, now)))
+        for tf, data in sets:
+            sig = find_signal(data, PIVOT_LEN[tf])
+            if sig:
+                sig.update(tf=tf, **universe[t])
+                signals.append(sig)
     log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,})")
     if universe:  # bij een mislukte download het oude universum houden
         state["universe"] = universe
@@ -311,23 +354,29 @@ def scan_stocks_intraday(state: dict, now: datetime) -> list[dict]:
     frames = yahoo_download(list(universe), "60d", "1h")
     signals = []
     for t, df in frames.items():
-        sig = find_signal(stock_4h(stock_1h(df, now), now), PIVOT_LEN["4h"])
-        if sig:
-            sig.update(tf="4h", **universe[t])
-            signals.append(sig)
+        h1 = stock_1h(df, now)
+        for tf, hours in INTRADAY_HOURS.items():
+            sig = find_signal(stock_hours(h1, hours, now), PIVOT_LEN[tf])
+            if sig:
+                sig.update(tf=tf, **universe[t])
+                signals.append(sig)
     return signals
 
 
 def scan_gold(now: datetime) -> list[dict]:
     signals = []
-    h = yahoo_download([GOLD["yahoo"]], "60d", "1h").get(GOLD["yahoo"])
-    d = yahoo_download([GOLD["yahoo"]], "1y", "1d").get(GOLD["yahoo"])
+    h = yahoo_download([GOLD["yahoo"]], "60d", "1h").get(GOLD["yahoo"]) if INTRADAY_HOURS else None
+    d = yahoo_download([GOLD["yahoo"]], "2y", "1d").get(GOLD["yahoo"])
     sets, vol = [], 0.0
     if h is not None:
-        sets.append(("4h", gold_4h(gold_1h(h, now), now)))
+        h1 = gold_1h(h, now)
+        sets += [(tf, gold_hours(h1, hours, now)) for tf, hours in INTRADAY_HOURS.items()]
     if d is not None:
         d = gold_1d(d, now)
-        sets.append(("1d", d))
+        if "1d" in PIVOT_LEN:
+            sets.append(("1d", d))
+        if "1w" in PIVOT_LEN:
+            sets.append(("1w", weekly(d, 17, now)))
         vol = float((d["close"] * d["volume"] * 100).tail(20).mean())  # 100 oz per contract
     for tf, data in sets:
         sig = find_signal(data, PIVOT_LEN[tf])
@@ -354,8 +403,7 @@ def fmt_vol(x: float) -> str:
 
 
 def format_signal(s: dict) -> str:
-    chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval=" + \
-        {"4h": "240", "1d": "D"}[s["tf"]]
+    chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval={TV_INTERVAL[s['tf']]}"
     ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
     return (f"🔔 <code>{ticker}</code> HH + HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
             f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}) · "
@@ -410,6 +458,7 @@ def main() -> int:
     weekday = now_et.weekday() < 5
     minutes = now_et.hour * 60 + now_et.minute
     signals: list[dict] = []
+    log("Timeframes: " + ", ".join(f"{tf} ({n} candles)" for tf, n in PIVOT_LEN.items()))
 
     # Crypto: 24/7
     try:
@@ -436,8 +485,10 @@ def main() -> int:
         except Exception as e:
             log(f"Stocks daily scan mislukt: {e}")
 
-    # Stocks 4h: tijdens beurstijden (candles sluiten om 13:30 en 16:00)
-    if weekday and 13 * 60 + 25 <= minutes <= 17 * 60 + 30 and state.get("universe"):
+    # Stocks intraday: tijdens beurstijden, vanaf de eerste candle die sluit (bv. 4h: 13:30)
+    first_close = 9 * 60 + 30 + 60 * min(INTRADAY_HOURS.values(), default=0)
+    if (INTRADAY_HOURS and weekday and first_close - 5 <= minutes <= 17 * 60 + 30
+            and state.get("universe")):
         try:
             signals += scan_stocks_intraday(state, now_et)
         except Exception as e:
