@@ -24,3 +24,4 @@ assets/generated/
 
 # scanner state (wordt bewaard in GitHub Actions cache)
 scanner/state.json
+__pycache__/
