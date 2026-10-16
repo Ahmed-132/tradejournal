@@ -1,7 +1,8 @@
 """HH + HL trend scanner voor US stocks, crypto (Binance) en goud.
 
 Draait elk uur (GitHub Actions) en stuurt een Telegram-bericht zodra een
-ticker een nieuwe uptrend maakt: Higher High + Higher Low op 1h, 4h of 1D.
+ticker een nieuwe uptrend maakt: Higher High + Higher Low op 4h of 1D.
+Meldingen staan gesorteerd op dagvolume in dollar (hoogste eerst).
 
 Gebruik:
     python scanner/scan.py                 # normale run
@@ -29,7 +30,7 @@ import requests
 # ---------------------------------------------------------------- instellingen
 
 # Aantal candles links en rechts van een top/bodem om hem te bevestigen.
-PIVOT_LEN = {"1h": 3, "4h": 2, "1d": 2}
+PIVOT_LEN = {"4h": 2, "1d": 2}
 
 # Filter voor US stocks.
 MIN_PRICE = 5.0
@@ -141,8 +142,15 @@ def binance_klines(symbol: str, interval: str, now_ms: int) -> pd.DataFrame | No
     return None
 
 
+def binance_volumes() -> dict[str, float]:
+    """24h-volume in USDT per paar."""
+    data = http.get(f"{BINANCE}/ticker/24hr", timeout=30).json()
+    return {t["symbol"]: float(t["quoteVolume"]) for t in data}
+
+
 def scan_crypto() -> list[dict]:
     symbols = binance_symbols()
+    volumes = binance_volumes()
     log(f"Crypto: {len(symbols)} USDT-paren")
     now_ms = int(time.time() * 1000)
     jobs = [(s, tf) for s in symbols for tf in PIVOT_LEN]
@@ -152,7 +160,7 @@ def scan_crypto() -> list[dict]:
         df = binance_klines(sym, tf, now_ms)
         sig = find_signal(df, PIVOT_LEN[tf]) if df is not None else None
         if sig:
-            sig.update(name=sym, tf=tf, tv=f"BINANCE:{sym}")
+            sig.update(name=sym, tf=tf, tv=f"BINANCE:{sym}", vol=volumes.get(sym, 0.0))
         return sig
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -269,7 +277,7 @@ def stock_candidates() -> dict[str, dict]:
         sym = row["Symbol"]
         ex = TV_EXCHANGE.get(row["Listing Exchange"])
         out[sym.replace(".", "-")] = {
-            "name": sym, "tv": f"{ex}:{sym.replace('.', '_')}" if ex else sym}
+            "name": sym, "tv": f"{ex}:{sym}" if ex else sym}
     return out
 
 
@@ -285,10 +293,11 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
             continue
         if df["close"].iloc[-1] < MIN_PRICE or df["volume"].tail(20).mean() < MIN_AVG_VOLUME:
             continue
-        universe[t] = candidates[t]
+        universe[t] = {**candidates[t],
+                       "vol": float((df["close"] * df["volume"]).tail(20).mean())}
         sig = find_signal(df, PIVOT_LEN["1d"])
         if sig:
-            sig.update(tf="1d", **candidates[t])
+            sig.update(tf="1d", **universe[t])
             signals.append(sig)
     log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,})")
     if universe:  # bij een mislukte download het oude universum houden
@@ -302,12 +311,10 @@ def scan_stocks_intraday(state: dict, now: datetime) -> list[dict]:
     frames = yahoo_download(list(universe), "60d", "1h")
     signals = []
     for t, df in frames.items():
-        h1 = stock_1h(df, now)
-        for tf, data in (("1h", h1), ("4h", stock_4h(h1, now))):
-            sig = find_signal(data, PIVOT_LEN[tf])
-            if sig:
-                sig.update(tf=tf, **universe[t])
-                signals.append(sig)
+        sig = find_signal(stock_4h(stock_1h(df, now), now), PIVOT_LEN["4h"])
+        if sig:
+            sig.update(tf="4h", **universe[t])
+            signals.append(sig)
     return signals
 
 
@@ -315,16 +322,17 @@ def scan_gold(now: datetime) -> list[dict]:
     signals = []
     h = yahoo_download([GOLD["yahoo"]], "60d", "1h").get(GOLD["yahoo"])
     d = yahoo_download([GOLD["yahoo"]], "1y", "1d").get(GOLD["yahoo"])
-    sets = []
+    sets, vol = [], 0.0
     if h is not None:
-        h1 = gold_1h(h, now)
-        sets += [("1h", h1), ("4h", gold_4h(h1, now))]
+        sets.append(("4h", gold_4h(gold_1h(h, now), now)))
     if d is not None:
-        sets.append(("1d", gold_1d(d, now)))
+        d = gold_1d(d, now)
+        sets.append(("1d", d))
+        vol = float((d["close"] * d["volume"] * 100).tail(20).mean())  # 100 oz per contract
     for tf, data in sets:
         sig = find_signal(data, PIVOT_LEN[tf])
         if sig:
-            sig.update(tf=tf, name=GOLD["name"], tv=GOLD["tv"])
+            sig.update(tf=tf, name=GOLD["name"], tv=GOLD["tv"], vol=vol)
             signals.append(sig)
     return signals
 
@@ -338,13 +346,23 @@ def fmt(x: float) -> str:
     return f"{x:.8f}".rstrip("0").rstrip(".")
 
 
+def fmt_vol(x: float) -> str:
+    for div, unit in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if x >= div:
+            return f"${x / div:.1f}{unit}"
+    return f"${x:.0f}"
+
+
 def format_signal(s: dict) -> str:
-    url = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval=" + \
-        {"1h": "60", "4h": "240", "1d": "D"}[s["tf"]]
-    return (f"🔔 <a href=\"{url}\"><b>{s['name']}</b></a> HH + HL op <b>{s['tf']}</b>\n"
+    chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval=" + \
+        {"4h": "240", "1d": "D"}[s["tf"]]
+    symbol_page = f"https://www.tradingview.com/symbols/{s['tv'].replace(':', '-')}/"
+    ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
+    return (f"🔔 <code>{ticker}</code> HH + HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
             f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}) · "
             f"HL {fmt(s['hl'])} (vorige {fmt(s['prev_l'])})\n"
-            f"Koers {fmt(s['close'])}")
+            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a> · "
+            f"<a href=\"{symbol_page}\">App</a>")
 
 
 def send_telegram(messages: list[str]) -> None:
@@ -410,7 +428,9 @@ def main() -> int:
     # Stocks daily + universum: één keer per dag na de slotbel (of als er nog geen universum is)
     today = now_et.date().isoformat()
     after_close = weekday and minutes >= 16 * 60 + 15
-    if (after_close and state.get("stocks_daily_done") != today) or not state.get("universe"):
+    universe = state.get("universe") or {}
+    needs_universe = not universe or "vol" not in next(iter(universe.values()))
+    if (after_close and state.get("stocks_daily_done") != today) or needs_universe:
         try:
             signals += scan_stocks_daily(state, now_et)
             if after_close:
@@ -418,8 +438,8 @@ def main() -> int:
         except Exception as e:
             log(f"Stocks daily scan mislukt: {e}")
 
-    # Stocks 1h/4h: tijdens beurstijden (eerste candle sluit 10:30, laatste 16:00)
-    if weekday and 10 * 60 + 25 <= minutes <= 17 * 60 + 30 and state.get("universe"):
+    # Stocks 4h: tijdens beurstijden (candles sluiten om 13:30 en 16:00)
+    if weekday and 13 * 60 + 25 <= minutes <= 17 * 60 + 30 and state.get("universe"):
         try:
             signals += scan_stocks_intraday(state, now_et)
         except Exception as e:
@@ -434,8 +454,7 @@ def main() -> int:
             state["alerts"][key] = stamp
             new.append(s)
 
-    order = {"1d": 0, "4h": 1, "1h": 2}
-    new.sort(key=lambda s: (order[s["tf"]], s["name"]))
+    new.sort(key=lambda s: s.get("vol", 0.0), reverse=True)  # hoogste volume eerst
     messages = [format_signal(s) for s in new]
     log(f"{len(signals)} signalen, {len(new)} nieuw")
     for m in messages:
