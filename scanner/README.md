@@ -18,7 +18,7 @@ Mogelijke timeframes: `1h`, `2h`, `4h`, `1d`, `1w`. Het getal na `:` is hoeveel 
 - Crypto: Binance-data = exact dezelfde candles als `BINANCE:` op TradingView.
 - Stocks/goud: Yahoo Finance, 4h-candles opgebouwd zoals TradingView (9:30–13:30 en 13:30–16:00 New York-tijd).
 - Stocks 4h: tijdens beurstijden. Stocks daily + filter: één keer per dag na de slotbel.
-- Je krijgt één melding per nieuwe uptrend (niet bij elke nieuwe HH).
+- Melding bij elke nieuwe bevestigde Higher High die op een Higher Low volgt (L1 → H1 → L2 → H2, met H2 > H1 en L2 > L1). L2 = laagste punt tussen H1 en H2.
 - Meldingen staan gesorteerd op dagvolume in dollar, hoogste eerst.
 - Tik op de ticker om hem te kopiëren (plakken in de TradingView-zoekbalk), of tik op *Chart* om de chart te openen.
 

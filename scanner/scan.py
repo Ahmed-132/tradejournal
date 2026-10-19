@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import io
 import json
-import math
 import os
 import re
 import sys
@@ -108,35 +107,38 @@ def log(*args):
 
 
 def find_signal(df: pd.DataFrame, length: int) -> dict | None:
-    """Zoekt het moment waarop de trend omslaat naar HH + HL.
+    """Zoekt een nieuwe Higher High die op een Higher Low volgt (L1 -> H1 -> L2 -> H2).
 
-    Zelfde logica als de Pine Script-indicator: een top (pivot high) is
-    bevestigd als er `length` lagere candles links en rechts van liggen.
-    Uptrend = laatste top > vorige top EN laatste bodem > vorige bodem.
-    Geeft het signaal terug als het recent is en de uptrend nog loopt.
+    Een top (pivot high) is bevestigd als er `length` lagere candles links en
+    rechts van liggen. Bij elke nieuwe bevestigde top H2 kijken we:
+      - H2 > H1 (de vorige top)                       -> Higher High
+      - L2 > L1, met L2 = laagste low tussen H1 en H2  -> Higher Low
+                 en  L1 = laagste low tussen H0 en H1
+    Elke nieuwe HH die hieraan voldoet is een signaal (dus ook verderop in de trend).
+    De melding komt op de candle waarop H2 bevestigd wordt.
     """
     n = len(df)
     if n < 4 * length + 2:
         return None
     h = df["high"].to_numpy(float)
     l = df["low"].to_numpy(float)
-    last_h = prev_h = last_l = prev_l = math.nan
-    was_up = False
+    tops: list[int] = []  # candle-indexen van bevestigde toppen
     signal = None
 
-    for j in range(2 * length, n):  # j = candle waarop de pivot bevestigd wordt
+    for j in range(2 * length, n):  # j = candle waarop de top bevestigd wordt
         i = j - length
-        if h[i] > h[i - length:i].max() and h[i] >= h[i + 1:j + 1].max():
-            prev_h, last_h = last_h, h[i]
-        if l[i] < l[i - length:i].min() and l[i] <= l[i + 1:j + 1].min():
-            prev_l, last_l = last_l, l[i]
-        up = last_h > prev_h and last_l > prev_l  # nan-vergelijkingen zijn False
-        if up and not was_up:
-            signal = {"bar": j, "hh": last_h, "prev_h": prev_h,
-                      "hl": last_l, "prev_l": prev_l}
-        was_up = up
+        if not (h[i] > h[i - length:i].max() and h[i] >= h[i + 1:j + 1].max()):
+            continue
+        tops.append(i)
+        if len(tops) < 3:
+            continue
+        h0, h1, h2 = tops[-3:]
+        l1 = l[h0 + 1:h1].min()
+        l2 = l[h1 + 1:h2].min()
+        if h[h2] > h[h1] and l2 > l1:
+            signal = {"bar": j, "hh": h[h2], "prev_h": h[h1], "hl": l2, "prev_l": l1}
 
-    if signal and was_up and signal["bar"] >= n - RECENT_BARS:
+    if signal and signal["bar"] >= n - RECENT_BARS:
         signal["time"] = df.index[signal["bar"]]
         signal["close"] = float(df["close"].iloc[-1])
         return signal
