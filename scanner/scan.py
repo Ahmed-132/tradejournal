@@ -56,7 +56,25 @@ INTRADAY_HOURS = {tf: int(tf[:-1]) for tf in PIVOT_LEN if tf.endswith("h")}
 
 # Filter voor US stocks.
 MIN_PRICE = 5.0
-MIN_AVG_VOLUME = 500_000  # gemiddeld dagvolume over 20 dagen
+MIN_AVG_VOLUME = 500_000  # gemiddeld aantal aandelen per dag over 20 dagen
+
+
+def parse_amount(text: str, default: float) -> float:
+    """'10m' -> 10_000_000, '500k' -> 500_000, '1.5b' -> 1_500_000_000."""
+    t = (text or "").strip().lower().replace("$", "").replace(",", "").replace(" ", "")
+    if not t:
+        return default
+    mult = {"k": 1e3, "m": 1e6, "b": 1e9}.get(t[-1], 1)
+    try:
+        return float(t[:-1] if mult != 1 else t) * mult
+    except ValueError:
+        print(f"Ongeldige MIN_VOLUME '{text}', standaard gebruikt")
+        return default
+
+
+# Minimum dagvolume in dollar voor elke melding (stocks, crypto en goud).
+# In te stellen via de omgevingsvariabele MIN_VOLUME, bv. "10m".
+MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 10e6)
 
 # Een signaal telt als het op een van de laatste N gesloten candles ontstond
 # (vangt een gemiste of vertraagde run op; dubbele meldingen worden voorkomen).
@@ -328,10 +346,11 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
         df = stock_1d(df, now)
         if len(df) < 20:
             continue
-        if df["close"].iloc[-1] < MIN_PRICE or df["volume"].tail(20).mean() < MIN_AVG_VOLUME:
+        dollar_vol = float((df["close"] * df["volume"]).tail(20).mean())
+        if (df["close"].iloc[-1] < MIN_PRICE or df["volume"].tail(20).mean() < MIN_AVG_VOLUME
+                or dollar_vol < MIN_DOLLAR_VOLUME):
             continue
-        universe[t] = {**candidates[t],
-                       "vol": float((df["close"] * df["volume"]).tail(20).mean())}
+        universe[t] = {**candidates[t], "vol": dollar_vol}
         sets = []
         if "1d" in PIVOT_LEN:
             sets.append(("1d", df))
@@ -342,9 +361,11 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
             if sig:
                 sig.update(tf=tf, **universe[t])
                 signals.append(sig)
-    log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,})")
+    log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,}, "
+        f"dagvolume > {fmt_vol(MIN_DOLLAR_VOLUME)})")
     if universe:  # bij een mislukte download het oude universum houden
         state["universe"] = universe
+        state["universe_min_vol"] = MIN_DOLLAR_VOLUME
     return signals
 
 
@@ -459,6 +480,7 @@ def main() -> int:
     minutes = now_et.hour * 60 + now_et.minute
     signals: list[dict] = []
     log("Timeframes: " + ", ".join(f"{tf} ({n} candles)" for tf, n in PIVOT_LEN.items()))
+    log(f"Minimum dagvolume: {fmt_vol(MIN_DOLLAR_VOLUME)}")
 
     # Crypto: 24/7
     try:
@@ -476,7 +498,8 @@ def main() -> int:
     today = now_et.date().isoformat()
     after_close = weekday and minutes >= 16 * 60 + 15
     universe = state.get("universe") or {}
-    needs_universe = not universe or "vol" not in next(iter(universe.values()))
+    needs_universe = (not universe or "vol" not in next(iter(universe.values()))
+                      or state.get("universe_min_vol") != MIN_DOLLAR_VOLUME)
     if (after_close and state.get("stocks_daily_done") != today) or needs_universe:
         try:
             signals += scan_stocks_daily(state, now_et)
@@ -493,6 +516,9 @@ def main() -> int:
             signals += scan_stocks_intraday(state, now_et)
         except Exception as e:
             log(f"Stocks intraday scan mislukt: {e}")
+
+    # Te weinig volume: geen melding
+    signals = [s for s in signals if s.get("vol", 0.0) >= MIN_DOLLAR_VOLUME]
 
     # Dubbele meldingen voorkomen
     new = []

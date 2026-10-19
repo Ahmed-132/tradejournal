@@ -40,6 +40,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TIMEFRAMES: ${{ vars.TIMEFRAMES }}
+          MIN_VOLUME: ${{ vars.MIN_VOLUME }}
 
       - uses: actions/cache/save@v4
         if: always()

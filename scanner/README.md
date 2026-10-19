@@ -2,6 +2,10 @@
 
 Scant elk half uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle crypto USDT-paren op Binance** en **goud** (COMEX GC1!) op de timeframes die jij kiest (standaard **4h en daily**), en stuurt een Telegram-melding zodra een ticker een nieuwe uptrend maakt: **Higher High + Higher Low**.
 
+## Minimum volume
+
+Je krijgt alleen meldingen voor tickers met minstens **$10M dagvolume** (stocks: gemiddelde over 20 dagen, crypto: laatste 24 uur). Aanpassen: maak een variabele `MIN_VOLUME` aan (zelfde plek als hieronder), bv. `25m`, `500k` of `1b`.
+
 ## Timeframes aanpassen
 
 GitHub → repo → *Settings* → *Secrets and variables* → *Actions* → tabblad **Variables** → *New repository variable*:
