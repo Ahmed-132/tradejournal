@@ -41,6 +41,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TIMEFRAMES: ${{ vars.TIMEFRAMES }}
           MIN_VOLUME: ${{ vars.MIN_VOLUME }}
+          MIN_HH_PCT: ${{ vars.MIN_HH_PCT }}
 
       - uses: actions/cache/save@v4
         if: always()

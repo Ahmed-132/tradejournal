@@ -6,6 +6,10 @@ Scant elk half uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle c
 
 Je krijgt alleen meldingen voor tickers met minstens **$5M dagvolume** (mediaan over de laatste 20 dagen, zodat pump-dagen niet meetellen). Aanpassen: maak een variabele `MIN_VOLUME` aan (zelfde plek als hieronder), bv. `25m`, `500k` of `1b`.
 
+## Minimum hoogte van de HH
+
+Een nieuwe top telt pas als Higher High als hij minstens **1%** boven de vorige top ligt; minder is eerder een dubbele top. Aanpassen: variabele `MIN_HH_PCT`, bv. `0.5` of `2`.
+
 ## Timeframes aanpassen
 
 GitHub → repo → *Settings* → *Secrets and variables* → *Actions* → tabblad **Variables** → *New repository variable*:

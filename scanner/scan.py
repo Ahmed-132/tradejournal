@@ -71,6 +71,13 @@ def parse_amount(text: str, default: float) -> float:
         return default
 
 
+# Een nieuwe top telt pas als HH als hij minstens zoveel % boven de vorige top ligt
+# (anders is het eerder een dubbele top). In te stellen via MIN_HH_PCT, bv. "1.5".
+try:
+    MIN_HH_PCT = float(os.environ.get("MIN_HH_PCT", "").replace(",", ".") or 1.0)
+except ValueError:
+    MIN_HH_PCT = 1.0
+
 # Minimum dagvolume in dollar (mediaan over 20 dagen) voor elke melding.
 # In te stellen via de omgevingsvariabele MIN_VOLUME, bv. "10m".
 MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 5e6)
@@ -111,7 +118,7 @@ def find_signal(df: pd.DataFrame, length: int) -> dict | None:
 
     Een top (pivot high) is bevestigd als er `length` lagere candles links en
     rechts van liggen. Bij elke nieuwe bevestigde top H2 kijken we:
-      - H2 > H1 (de vorige top)                       -> Higher High
+      - H2 >= H1 + MIN_HH_PCT %  (de vorige top)       -> Higher High
       - L2 > L1, met L2 = laagste low tussen H1 en H2  -> Higher Low
                  en  L1 = laagste low tussen H0 en H1
     Elke nieuwe HH die hieraan voldoet is een signaal (dus ook verderop in de trend).
@@ -135,7 +142,7 @@ def find_signal(df: pd.DataFrame, length: int) -> dict | None:
         h0, h1, h2 = tops[-3:]
         l1 = l[h0 + 1:h1].min()
         l2 = l[h1 + 1:h2].min()
-        if h[h2] > h[h1] and l2 > l1:
+        if h[h2] >= h[h1] * (1 + MIN_HH_PCT / 100) and l2 > l1:
             signal = {"bar": j, "hh": h[h2], "prev_h": h[h1], "hl": l2, "prev_l": l1}
 
     if signal and signal["bar"] >= n - RECENT_BARS:
@@ -431,7 +438,7 @@ def format_signal(s: dict) -> str:
     chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval={TV_INTERVAL[s['tf']]}"
     ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
     return (f"🔔 <code>{ticker}</code> HH + HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
-            f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}) · "
+            f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}, +{(s['hh'] / s['prev_h'] - 1) * 100:.1f}%) · "
             f"HL {fmt(s['hl'])} (vorige {fmt(s['prev_l'])})\n"
             f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>")
 
@@ -484,7 +491,7 @@ def main() -> int:
     minutes = now_et.hour * 60 + now_et.minute
     signals: list[dict] = []
     log("Timeframes: " + ", ".join(f"{tf} ({n} candles)" for tf, n in PIVOT_LEN.items()))
-    log(f"Minimum dagvolume: {fmt_vol(MIN_DOLLAR_VOLUME)}")
+    log(f"Minimum dagvolume: {fmt_vol(MIN_DOLLAR_VOLUME)} · HH minstens {MIN_HH_PCT:g}% boven vorige top")
 
     # Crypto: 24/7
     try:
