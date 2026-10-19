@@ -73,7 +73,7 @@ def parse_amount(text: str, default: float) -> float:
 
 # Minimum dagvolume in dollar (mediaan over 20 dagen) voor elke melding.
 # In te stellen via de omgevingsvariabele MIN_VOLUME, bv. "10m".
-MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 10e6)
+MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 5e6)
 
 # Een signaal telt als het op een van de laatste N gesloten candles ontstond
 # (vangt een gemiste of vertraagde run op; dubbele meldingen worden voorkomen).
