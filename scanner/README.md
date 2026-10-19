@@ -4,7 +4,7 @@ Scant elk half uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle c
 
 ## Minimum volume
 
-Je krijgt alleen meldingen voor tickers met minstens **$10M dagvolume** (stocks: gemiddelde over 20 dagen, crypto: laatste 24 uur). Aanpassen: maak een variabele `MIN_VOLUME` aan (zelfde plek als hieronder), bv. `25m`, `500k` of `1b`.
+Je krijgt alleen meldingen voor tickers met minstens **$10M dagvolume** (mediaan over de laatste 20 dagen, zodat pump-dagen niet meetellen). Aanpassen: maak een variabele `MIN_VOLUME` aan (zelfde plek als hieronder), bv. `25m`, `500k` of `1b`.
 
 ## Timeframes aanpassen
 

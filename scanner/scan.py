@@ -72,7 +72,7 @@ def parse_amount(text: str, default: float) -> float:
         return default
 
 
-# Minimum dagvolume in dollar voor elke melding (stocks, crypto en goud).
+# Minimum dagvolume in dollar (mediaan over 20 dagen) voor elke melding.
 # In te stellen via de omgevingsvariabele MIN_VOLUME, bv. "10m".
 MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 10e6)
 
@@ -172,8 +172,8 @@ def binance_klines(symbol: str, interval: str, now_ms: int) -> pd.DataFrame | No
             if not rows:
                 return None
             df = pd.DataFrame(
-                [[float(x) for x in k[1:6]] for k in rows],
-                columns=["open", "high", "low", "close", "volume"],
+                [[float(x) for x in k[1:6]] + [float(k[7])] for k in rows],
+                columns=["open", "high", "low", "close", "volume", "quote_volume"],
                 index=pd.to_datetime([k[0] for k in rows], unit="ms", utc=True),
             )
             return df
@@ -182,22 +182,24 @@ def binance_klines(symbol: str, interval: str, now_ms: int) -> pd.DataFrame | No
     return None
 
 
-def binance_volumes() -> dict[str, float]:
-    """24h-volume in USDT per paar."""
-    data = http.get(f"{BINANCE}/ticker/24hr", timeout=30).json()
-    return {t["symbol"]: float(t["quoteVolume"]) for t in data}
-
-
 def scan_crypto() -> list[dict]:
     symbols = binance_symbols()
-    volumes = binance_volumes()
-    log(f"Crypto: {len(symbols)} USDT-paren")
     now_ms = int(time.time() * 1000)
-    jobs = [(s, tf) for s in symbols for tf in PIVOT_LEN]
+
+    # Mediaan van het dagvolume (USDT) over 20 gesloten dagen, zoals bij stocks:
+    # een paar pump-dagen tillen een munt niet boven het minimum.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        daily = dict(zip(symbols, pool.map(lambda s: binance_klines(s, "1d", now_ms), symbols)))
+    volumes = {s: float(df["quote_volume"].tail(20).median())
+               for s, df in daily.items() if df is not None and len(df)}
+    active = [s for s in symbols if volumes.get(s, 0.0) >= MIN_DOLLAR_VOLUME]
+    log(f"Crypto: {len(symbols)} USDT-paren, {len(active)} met dagvolume "
+        f"> {fmt_vol(MIN_DOLLAR_VOLUME)} (20 dagen)")
+    jobs = [(s, tf) for s in active for tf in PIVOT_LEN]
 
     def work(job):
         sym, tf = job
-        df = binance_klines(sym, tf, now_ms)
+        df = daily[sym] if tf == "1d" else binance_klines(sym, tf, now_ms)
         sig = find_signal(df, PIVOT_LEN[tf]) if df is not None else None
         if sig:
             sig.update(name=sym, tf=tf, tv=f"BINANCE:{sym}", vol=volumes.get(sym, 0.0))
@@ -346,7 +348,7 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
         df = stock_1d(df, now)
         if len(df) < 20:
             continue
-        dollar_vol = float((df["close"] * df["volume"]).tail(20).mean())
+        dollar_vol = float((df["close"] * df["volume"]).tail(20).median())
         if (df["close"].iloc[-1] < MIN_PRICE or df["volume"].tail(20).mean() < MIN_AVG_VOLUME
                 or dollar_vol < MIN_DOLLAR_VOLUME):
             continue
@@ -398,7 +400,7 @@ def scan_gold(now: datetime) -> list[dict]:
             sets.append(("1d", d))
         if "1w" in PIVOT_LEN:
             sets.append(("1w", weekly(d, 17, now)))
-        vol = float((d["close"] * d["volume"] * 100).tail(20).mean())  # 100 oz per contract
+        vol = float((d["close"] * d["volume"] * 100).tail(20).median())  # 100 oz per contract
     for tf, data in sets:
         sig = find_signal(data, PIVOT_LEN[tf])
         if sig:
