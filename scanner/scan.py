@@ -448,6 +448,24 @@ def halal_reason(ticker: str, sic: int | None, bal: dict[str, float] | None) -> 
     return ""
 
 
+def sec_diagnose() -> None:
+    """Tijdelijk: welke SEC-adressen/User-Agents werken vanaf deze server?"""
+    urls = ["https://www.sec.gov/files/company_tickers.json",
+            "https://data.sec.gov/submissions/CIK0000320193.json",
+            f"https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/{recent_quarters()[1]}.json"]
+    agents = [SEC_HEADERS["User-Agent"], "HH-HL-Scanner admin@hhhlscanner.com",
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"]
+    for url in urls:
+        for ua in agents:
+            try:
+                r = requests.get(url, headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate",
+                                               "Host": url.split("/")[2]}, timeout=30)
+                log(f"  diag {r.status_code} {url.split('/')[2]}{url[url.index('/', 8):][:40]} UA={ua[:30]}")
+            except Exception as e:
+                log(f"  diag ERR {url} {e}")
+            time.sleep(0.3)
+
+
 def apply_halal(state: dict) -> None:
     """Zet state['universe'] = liquide stocks die halal zijn (of alle liquide als het filter uit staat)."""
     liquid = state.get("liquid", {})
@@ -477,6 +495,7 @@ def apply_halal(state: dict) -> None:
         balances = sec_balances()
     except Exception as e:
         log(f"Halal: SEC-gegevens ophalen mislukt ({e}), vorige resultaten gebruikt")
+        sec_diagnose()
         state["universe"] = {t: v for t, v in liquid.items() if halal.get(t) == ""}
         return
     halal = {}
