@@ -90,9 +90,10 @@ HALAL_ONLY = os.environ.get("HALAL", "1").strip().lower() not in ("0", "false", 
 HALAL_MAX_RATIO = 1 / 3          # schulden / totale activa en cash+beleggingen / totale activa
 HALAL_REFRESH_DAYS = 7           # balansgegevens opnieuw ophalen
 SIC_REFRESH_DAYS = 30            # sectorcode per bedrijf opnieuw ophalen
-SEC_HEADERS = {"User-Agent": os.environ.get(
-    "SEC_USER_AGENT", "HH-HL-Scanner github.com/Ahmed-132/tradejournal"),
-    "Accept-Encoding": "gzip, deflate"}
+# De SEC vraagt een naam + contactadres in de User-Agent (anders 403).
+SEC_HEADERS = {"User-Agent": os.environ.get("SEC_USER_AGENT") or
+               "HH-HL-Scanner 296399173+Ahmed-132@users.noreply.github.com",
+               "Accept-Encoding": "gzip, deflate"}
 # Niet-toegelaten activiteiten via SIC-codes (SEC-sectorcodes).
 HALAL_EXCLUDED_SIC = [
     (2011, 2013, "vlees/varkensvlees"), (2082, 2085, "alcohol"), (2100, 2199, "tabak"),

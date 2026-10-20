@@ -43,6 +43,7 @@ jobs:
           MIN_VOLUME: ${{ vars.MIN_VOLUME }}
           MIN_VOLUME_STOCKS: ${{ vars.MIN_VOLUME_STOCKS }}
           HALAL: ${{ vars.HALAL }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           MIN_HH_PCT: ${{ vars.MIN_HH_PCT }}
 
       - uses: actions/cache/save@v4
