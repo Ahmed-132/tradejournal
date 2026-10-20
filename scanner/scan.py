@@ -84,15 +84,28 @@ MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 5e6)
 # Aparte (hogere) grens voor US stocks: minder wicks en gaps. Variabele MIN_VOLUME_STOCKS.
 MIN_STOCK_VOLUME = parse_amount(os.environ.get("MIN_VOLUME_STOCKS", ""), 200e6)
 
-# Halal-filter voor stocks (benadering van de AAOIFI-screening). Uitzetten: HALAL=0.
+# Halal-filter voor stocks, volgens de MSCI Islamic-methode (gegevens: SEC EDGAR).
+# Uitzetten: variabele HALAL=0.
 HALAL_ONLY = os.environ.get("HALAL", "1").strip().lower() not in ("0", "false", "no", "nee", "off")
-HALAL_MAX_RATIO = 0.30      # schulden / marktkapitalisatie en cash / marktkapitalisatie
-HALAL_RECHECK_DAYS = 30
-HALAL_EXCLUDED_SECTORS = {"Financial Services"}  # banken, verzekeraars, leningen, beurzen
-HALAL_EXCLUDED_INDUSTRIES = {
-    "Beverages - Brewers", "Beverages - Wineries & Distilleries", "Tobacco",
-    "Gambling", "Resorts & Casinos", "Lodging", "Entertainment",
-    "Aerospace & Defense", "REIT - Mortgage",
+HALAL_MAX_RATIO = 1 / 3          # schulden / totale activa en cash+beleggingen / totale activa
+HALAL_REFRESH_DAYS = 7           # balansgegevens opnieuw ophalen
+SIC_REFRESH_DAYS = 30            # sectorcode per bedrijf opnieuw ophalen
+SEC_HEADERS = {"User-Agent": os.environ.get(
+    "SEC_USER_AGENT", "HH-HL-Scanner github.com/Ahmed-132/tradejournal"),
+    "Accept-Encoding": "gzip, deflate"}
+# Niet-toegelaten activiteiten via SIC-codes (SEC-sectorcodes).
+HALAL_EXCLUDED_SIC = [
+    (2011, 2013, "vlees/varkensvlees"), (2082, 2085, "alcohol"), (2100, 2199, "tabak"),
+    (3480, 3489, "wapens"), (3760, 3769, "wapens/raketten"), (3795, 3795, "wapens"),
+    (6000, 6411, "bank/verzekering/financiële diensten"), (7011, 7011, "hotels/casino's"),
+    (7800, 7849, "film/entertainment"), (7990, 7999, "gokken/amusement"),
+]
+# Bedrijven die de SIC-code niet vangt (bv. alcohol onder 'beverages', defensie).
+HALAL_EXCLUDED_TICKERS = {
+    "STZ": "alcohol", "BF-A": "alcohol", "BF-B": "alcohol", "TAP": "alcohol", "DEO": "alcohol",
+    "BUD": "alcohol", "SAM": "alcohol", "MGPI": "alcohol", "ABEV": "alcohol",
+    "LMT": "wapens", "NOC": "wapens", "GD": "wapens", "RTX": "wapens", "LHX": "wapens",
+    "HII": "wapens", "TSN": "varkensvlees", "HRL": "varkensvlees",
 }
 
 # Een signaal telt als het op een van de laatste N gesloten candles ontstond
@@ -361,55 +374,124 @@ def stock_candidates() -> dict[str, dict]:
 
 
 def universe_cfg() -> str:
-    return f"{MIN_STOCK_VOLUME:g}|halal={HALAL_ONLY}"
+    return f"{MIN_STOCK_VOLUME:g}"
 
 
-def halal_check(ticker: str) -> dict | None:
-    """Sector-uitsluitingen + AAOIFI-ratio's (schulden en cash < 30% van de marktwaarde).
-    Geeft None als Yahoo geen gegevens gaf (dan later opnieuw proberen)."""
-    import yfinance as yf
-
-    for attempt in range(2):
-        try:
-            info = yf.Ticker(ticker).info or {}
-            break
-        except Exception:
-            time.sleep(5 * (attempt + 1))
-    else:
-        return None
-    mcap = info.get("marketCap") or 0
-    if not mcap:
-        return None
-    sector, industry = info.get("sector") or "", info.get("industry") or ""
-    debt = (info.get("totalDebt") or 0) / mcap
-    cash = (info.get("totalCash") or 0) / mcap
-    reason = ""
-    if sector in HALAL_EXCLUDED_SECTORS:
-        reason = sector
-    elif industry in HALAL_EXCLUDED_INDUSTRIES:
-        reason = industry
-    elif debt >= HALAL_MAX_RATIO:
-        reason = f"schulden {debt:.0%}"
-    elif cash >= HALAL_MAX_RATIO:
-        reason = f"cash {cash:.0%}"
-    return {"ok": not reason, "reason": reason, "date": datetime.now(timezone.utc).date().isoformat()}
+def sec_get(url: str):
+    for attempt in range(3):
+        r = http.get(url, headers=SEC_HEADERS, timeout=60)
+        if r.status_code == 404:
+            return None
+        if r.ok:
+            return r.json()
+        time.sleep(2 * (attempt + 1))
+    r.raise_for_status()
 
 
-def halal_filter(tickers: list[str], state: dict) -> set[str]:
-    """Geeft de halal tickers terug; resultaten worden 30 dagen onthouden."""
-    cache = state.setdefault("halal", {})
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=HALAL_RECHECK_DAYS)).date().isoformat()
-    todo = [t for t in tickers if cache.get(t, {}).get("date", "") < cutoff]
-    if todo:
-        log(f"Halal: {len(todo)} tickers controleren...")
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            for t, res in zip(todo, pool.map(halal_check, todo)):
-                if res:
-                    cache[t] = res
-    ok = {t for t in tickers if cache.get(t, {}).get("ok")}
-    unknown = sum(1 for t in tickers if t not in cache)
-    log(f"Halal: {len(ok)} van {len(tickers)} ok ({unknown} zonder gegevens, overgeslagen)")
-    return ok
+def recent_quarters(n: int = 3) -> list[str]:
+    """Laatste n afgesloten kalenderkwartalen, nieuwste eerst, bv. ['CY2026Q3I', ...]."""
+    d = datetime.now(timezone.utc)
+    y, q = d.year, (d.month - 1) // 3  # q = vorig kwartaal (0 = Q4 vorig jaar)
+    out = []
+    for _ in range(n):
+        if q == 0:
+            y, q = y - 1, 4
+        out.append(f"CY{y}Q{q}I")
+        q -= 1
+    return out
+
+
+BALANCE_TAGS = ["Assets", "LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent",
+                "LongTermDebtAndCapitalLeaseObligations", "ShortTermBorrowings",
+                "CashAndCashEquivalentsAtCarryingValue", "ShortTermInvestments",
+                "MarketableSecuritiesCurrent"]
+
+
+def sec_balances() -> dict[int, dict[str, float]]:
+    """Balansposten per CIK uit het meest recente kwartaal waarin 'Assets' bekend is."""
+    by_q: dict[str, dict[str, dict[int, float]]] = {}
+    for q in recent_quarters():
+        by_q[q] = {}
+        for tag in BALANCE_TAGS:
+            data = sec_get(f"https://data.sec.gov/api/xbrl/frames/us-gaap/{tag}/USD/{q}.json")
+            by_q[q][tag] = {d["cik"]: float(d["val"]) for d in (data or {}).get("data", [])}
+            time.sleep(0.15)
+    out: dict[int, dict[str, float]] = {}
+    for q in recent_quarters():  # nieuwste eerst
+        for cik, assets in by_q[q]["Assets"].items():
+            if cik not in out and assets > 0:
+                out[cik] = {tag: vals[cik] for tag, vals in by_q[q].items() if cik in vals}
+    return out
+
+
+def halal_reason(ticker: str, sic: int | None, bal: dict[str, float] | None) -> str:
+    """Lege string = halal. Anders de reden van uitsluiting."""
+    if ticker in HALAL_EXCLUDED_TICKERS:
+        return HALAL_EXCLUDED_TICKERS[ticker]
+    if sic is None:
+        return "geen SEC-gegevens"
+    for lo, hi, why in HALAL_EXCLUDED_SIC:
+        if lo <= sic <= hi:
+            return why
+    if not bal:
+        return "geen balans (US-GAAP)"
+    g = lambda k: bal.get(k, 0.0)
+    debt = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
+            or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent")) + g("ShortTermBorrowings")
+    cash = g("CashAndCashEquivalentsAtCarryingValue") + (g("ShortTermInvestments")
+                                                         or g("MarketableSecuritiesCurrent"))
+    if debt / bal["Assets"] >= HALAL_MAX_RATIO:
+        return f"schulden {debt / bal['Assets']:.0%} van activa"
+    if cash / bal["Assets"] >= HALAL_MAX_RATIO:
+        return f"cash {cash / bal['Assets']:.0%} van activa"
+    return ""
+
+
+def apply_halal(state: dict) -> None:
+    """Zet state['universe'] = liquide stocks die halal zijn (of alle liquide als het filter uit staat)."""
+    liquid = state.get("liquid", {})
+    if not HALAL_ONLY:
+        state["universe"] = liquid
+        return
+    today = datetime.now(timezone.utc).date()
+    fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
+    halal = state.get("halal", {})
+    if fresh and all(t in halal for t in liquid):
+        state["universe"] = {t: v for t, v in liquid.items() if halal[t] == ""}
+        return
+    try:
+        log(f"Halal: {len(liquid)} stocks controleren via SEC...")
+        tickers = sec_get("https://www.sec.gov/files/company_tickers.json") or {}
+        cik_of = {row["ticker"].upper().replace(".", "-"): int(row["cik_str"])
+                  for row in tickers.values()}
+        sic_cache = state.setdefault("sic", {})  # cik -> [sic, datum]
+        sic_cutoff = (today - timedelta(days=SIC_REFRESH_DAYS)).isoformat()
+        for t in liquid:
+            cik = cik_of.get(t)
+            if cik and sic_cache.get(str(cik), [None, ""])[1] < sic_cutoff:
+                sub = sec_get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json") or {}
+                sic = int(sub["sic"]) if str(sub.get("sic", "")).isdigit() else None
+                sic_cache[str(cik)] = [sic, today.isoformat()]
+                time.sleep(0.12)
+        balances = sec_balances()
+    except Exception as e:
+        log(f"Halal: SEC-gegevens ophalen mislukt ({e}), vorige resultaten gebruikt")
+        state["universe"] = {t: v for t, v in liquid.items() if halal.get(t) == ""}
+        return
+    halal = {}
+    for t in liquid:
+        cik = cik_of.get(t)
+        sic = sic_cache.get(str(cik), [None])[0] if cik else None
+        halal[t] = halal_reason(t, sic, balances.get(cik) if cik else None)
+    state["halal"], state["halal_date"] = halal, today.isoformat()
+    state["universe"] = {t: v for t, v in liquid.items() if halal[t] == ""}
+    reasons: dict[str, int] = {}
+    for why in halal.values():
+        if why:
+            key = why.split(" ")[0] if "%" in why else why
+            reasons[key] = reasons.get(key, 0) + 1
+    log(f"Halal: {len(state['universe'])} van {len(liquid)} ok · uitgesloten: "
+        + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items(), key=lambda x: -x[1])))
 
 
 def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
@@ -430,10 +512,14 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
         daily[t] = df
     log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,}, "
         f"dagvolume > {fmt_vol(MIN_STOCK_VOLUME)})")
-    if HALAL_ONLY and universe:
-        halal = halal_filter(list(universe), state)
-        universe = {t: v for t, v in universe.items() if t in halal}
+    if universe:  # bij een mislukte download het oude universum houden
+        state["liquid"] = universe
+        state["universe_cfg"] = universe_cfg()
+    apply_halal(state)
+    universe = state.get("universe", {})
     for t, info in universe.items():
+        if t not in daily:
+            continue
         df = daily[t]
         sets = []
         if "1d" in PIVOT_LEN:
@@ -445,9 +531,6 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
             if sig:
                 sig.update(tf=tf, **info)
                 signals.append(sig)
-    if universe:  # bij een mislukte download het oude universum houden
-        state["universe"] = universe
-        state["universe_cfg"] = universe_cfg()
     return signals
 
 
@@ -580,9 +663,8 @@ def main() -> int:
     # Stocks daily + universum: één keer per dag na de slotbel (of als er nog geen universum is)
     today = now_et.date().isoformat()
     after_close = weekday and minutes >= 16 * 60 + 15
-    universe = state.get("universe") or {}
-    needs_universe = (not universe or "vol" not in next(iter(universe.values()))
-                      or state.get("universe_cfg") != universe_cfg())
+    liquid = state.get("liquid") or {}
+    needs_universe = not liquid or state.get("universe_cfg") != universe_cfg()
     if (after_close and state.get("stocks_daily_done") != today) or needs_universe:
         try:
             signals += scan_stocks_daily(state, now_et)
@@ -590,6 +672,13 @@ def main() -> int:
                 state["stocks_daily_done"] = today
         except Exception as e:
             log(f"Stocks daily scan mislukt: {e}")
+
+    # Halal-lijst bijwerken als die verouderd is of het filter aan/uit gezet werd
+    halal_stale = HALAL_ONLY and state.get("halal_date", "") < (
+        now_utc - timedelta(days=HALAL_REFRESH_DAYS)).date().isoformat()
+    if state.get("liquid") and (state.get("halal_on") != HALAL_ONLY or halal_stale):
+        apply_halal(state)
+    state["halal_on"] = HALAL_ONLY
 
     # Stocks intraday: tijdens beurstijden, vanaf de eerste candle die sluit (bv. 4h: 13:30)
     first_close = 9 * 60 + 30 + 60 * min(INTRADAY_HOURS.values(), default=0)
