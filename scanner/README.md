@@ -6,6 +6,15 @@ Scant elk half uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle c
 
 Je krijgt alleen meldingen voor tickers met minstens **$5M dagvolume** (mediaan over de laatste 20 dagen, zodat pump-dagen niet meetellen). Aanpassen: maak een variabele `MIN_VOLUME` aan (zelfde plek als hieronder), bv. `25m`, `500k` of `1b`.
 
+## Stocks: volume en halal
+
+- Stocks moeten minstens **$200M dagvolume** hebben (mediaan 20 dagen) — minder wicks en gaps. Aanpassen: variabele `MIN_VOLUME_STOCKS`, bv. `100m`. (`MIN_VOLUME` geldt dan nog voor crypto en goud.)
+- **Halal-filter** (standaard aan, uitzetten met variabele `HALAL` = `0`). Benadering van de AAOIFI-screening met Yahoo-gegevens:
+  - uitgesloten sectoren: financiële diensten (banken, verzekeraars, leningen, beurzen), alcohol, tabak, gokken/casino's, hotels, entertainment, defensie, hypotheek-REITs;
+  - schulden < 30% en cash < 30% van de marktwaarde.
+  - Niet gecontroleerd: het aandeel verboden inkomsten (< 5%). Controleer een aandeel bij twijfel in een app als Zoya of Musaffa.
+  - Elk aandeel wordt om de 30 dagen opnieuw gecontroleerd.
+
 ## Minimum hoogte van de HH
 
 Een nieuwe top telt pas als Higher High als hij minstens **1%** boven de vorige top ligt; minder is eerder een dubbele top. Aanpassen: variabele `MIN_HH_PCT`, bv. `0.5` of `2`.

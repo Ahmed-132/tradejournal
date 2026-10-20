@@ -81,6 +81,19 @@ except ValueError:
 # Minimum dagvolume in dollar (mediaan over 20 dagen) voor elke melding.
 # In te stellen via de omgevingsvariabele MIN_VOLUME, bv. "10m".
 MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 5e6)
+# Aparte (hogere) grens voor US stocks: minder wicks en gaps. Variabele MIN_VOLUME_STOCKS.
+MIN_STOCK_VOLUME = parse_amount(os.environ.get("MIN_VOLUME_STOCKS", ""), 200e6)
+
+# Halal-filter voor stocks (benadering van de AAOIFI-screening). Uitzetten: HALAL=0.
+HALAL_ONLY = os.environ.get("HALAL", "1").strip().lower() not in ("0", "false", "no", "nee", "off")
+HALAL_MAX_RATIO = 0.30      # schulden / marktkapitalisatie en cash / marktkapitalisatie
+HALAL_RECHECK_DAYS = 30
+HALAL_EXCLUDED_SECTORS = {"Financial Services"}  # banken, verzekeraars, leningen, beurzen
+HALAL_EXCLUDED_INDUSTRIES = {
+    "Beverages - Brewers", "Beverages - Wineries & Distilleries", "Tobacco",
+    "Gambling", "Resorts & Casinos", "Lodging", "Entertainment",
+    "Aerospace & Defense", "REIT - Mortgage",
+}
 
 # Een signaal telt als het op een van de laatste N gesloten candles ontstond
 # (vangt een gemiste of vertraagde run op; dubbele meldingen worden voorkomen).
@@ -347,21 +360,81 @@ def stock_candidates() -> dict[str, dict]:
     return out
 
 
+def universe_cfg() -> str:
+    return f"{MIN_STOCK_VOLUME:g}|halal={HALAL_ONLY}"
+
+
+def halal_check(ticker: str) -> dict | None:
+    """Sector-uitsluitingen + AAOIFI-ratio's (schulden en cash < 30% van de marktwaarde).
+    Geeft None als Yahoo geen gegevens gaf (dan later opnieuw proberen)."""
+    import yfinance as yf
+
+    for attempt in range(2):
+        try:
+            info = yf.Ticker(ticker).info or {}
+            break
+        except Exception:
+            time.sleep(5 * (attempt + 1))
+    else:
+        return None
+    mcap = info.get("marketCap") or 0
+    if not mcap:
+        return None
+    sector, industry = info.get("sector") or "", info.get("industry") or ""
+    debt = (info.get("totalDebt") or 0) / mcap
+    cash = (info.get("totalCash") or 0) / mcap
+    reason = ""
+    if sector in HALAL_EXCLUDED_SECTORS:
+        reason = sector
+    elif industry in HALAL_EXCLUDED_INDUSTRIES:
+        reason = industry
+    elif debt >= HALAL_MAX_RATIO:
+        reason = f"schulden {debt:.0%}"
+    elif cash >= HALAL_MAX_RATIO:
+        reason = f"cash {cash:.0%}"
+    return {"ok": not reason, "reason": reason, "date": datetime.now(timezone.utc).date().isoformat()}
+
+
+def halal_filter(tickers: list[str], state: dict) -> set[str]:
+    """Geeft de halal tickers terug; resultaten worden 30 dagen onthouden."""
+    cache = state.setdefault("halal", {})
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=HALAL_RECHECK_DAYS)).date().isoformat()
+    todo = [t for t in tickers if cache.get(t, {}).get("date", "") < cutoff]
+    if todo:
+        log(f"Halal: {len(todo)} tickers controleren...")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for t, res in zip(todo, pool.map(halal_check, todo)):
+                if res:
+                    cache[t] = res
+    ok = {t for t in tickers if cache.get(t, {}).get("ok")}
+    unknown = sum(1 for t in tickers if t not in cache)
+    log(f"Halal: {len(ok)} van {len(tickers)} ok ({unknown} zonder gegevens, overgeslagen)")
+    return ok
+
+
 def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
     """Bouwt het universum (prijs/volume-filter) en zoekt daily-signalen."""
     candidates = stock_candidates()
     log(f"Stocks: {len(candidates)} kandidaten, daily data ophalen...")
     frames = yahoo_download(list(candidates), "2y" if "1w" in PIVOT_LEN else "1y", "1d")
-    universe, signals = {}, []
+    universe, signals, daily = {}, [], {}
     for t, df in frames.items():
         df = stock_1d(df, now)
         if len(df) < 20:
             continue
         dollar_vol = float((df["close"] * df["volume"]).tail(20).median())
         if (df["close"].iloc[-1] < MIN_PRICE or df["volume"].tail(20).mean() < MIN_AVG_VOLUME
-                or dollar_vol < MIN_DOLLAR_VOLUME):
+                or dollar_vol < MIN_STOCK_VOLUME):
             continue
         universe[t] = {**candidates[t], "vol": dollar_vol}
+        daily[t] = df
+    log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,}, "
+        f"dagvolume > {fmt_vol(MIN_STOCK_VOLUME)})")
+    if HALAL_ONLY and universe:
+        halal = halal_filter(list(universe), state)
+        universe = {t: v for t, v in universe.items() if t in halal}
+    for t, info in universe.items():
+        df = daily[t]
         sets = []
         if "1d" in PIVOT_LEN:
             sets.append(("1d", df))
@@ -370,13 +443,11 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
         for tf, data in sets:
             sig = find_signal(data, PIVOT_LEN[tf])
             if sig:
-                sig.update(tf=tf, **universe[t])
+                sig.update(tf=tf, **info)
                 signals.append(sig)
-    log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,}, "
-        f"dagvolume > {fmt_vol(MIN_DOLLAR_VOLUME)})")
     if universe:  # bij een mislukte download het oude universum houden
         state["universe"] = universe
-        state["universe_min_vol"] = MIN_DOLLAR_VOLUME
+        state["universe_cfg"] = universe_cfg()
     return signals
 
 
@@ -491,7 +562,8 @@ def main() -> int:
     minutes = now_et.hour * 60 + now_et.minute
     signals: list[dict] = []
     log("Timeframes: " + ", ".join(f"{tf} ({n} candles)" for tf, n in PIVOT_LEN.items()))
-    log(f"Minimum dagvolume: {fmt_vol(MIN_DOLLAR_VOLUME)} · HH minstens {MIN_HH_PCT:g}% boven vorige top")
+    log(f"Minimum dagvolume: crypto/goud {fmt_vol(MIN_DOLLAR_VOLUME)}, stocks {fmt_vol(MIN_STOCK_VOLUME)}"
+        f" · halal-filter stocks: {'aan' if HALAL_ONLY else 'uit'} · HH minstens {MIN_HH_PCT:g}% boven vorige top")
 
     # Crypto: 24/7
     try:
@@ -510,7 +582,7 @@ def main() -> int:
     after_close = weekday and minutes >= 16 * 60 + 15
     universe = state.get("universe") or {}
     needs_universe = (not universe or "vol" not in next(iter(universe.values()))
-                      or state.get("universe_min_vol") != MIN_DOLLAR_VOLUME)
+                      or state.get("universe_cfg") != universe_cfg())
     if (after_close and state.get("stocks_daily_done") != today) or needs_universe:
         try:
             signals += scan_stocks_daily(state, now_et)
