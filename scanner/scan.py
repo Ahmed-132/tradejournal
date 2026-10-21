@@ -84,10 +84,16 @@ MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 5e6)
 # Aparte (hogere) grens voor US stocks: minder wicks en gaps. Variabele MIN_VOLUME_STOCKS.
 MIN_STOCK_VOLUME = parse_amount(os.environ.get("MIN_VOLUME_STOCKS", ""), 200e6)
 
-# Halal-filter voor stocks, volgens de MSCI Islamic-methode (gegevens: SEC EDGAR).
+# Halal-filter voor stocks volgens AAOIFI en MSCI Islamic (gegevens: SEC EDGAR).
 # Uitzetten: variabele HALAL=0.
 HALAL_ONLY = os.environ.get("HALAL", "1").strip().lower() not in ("0", "false", "no", "nee", "off")
-HALAL_MAX_RATIO = 1 / 3          # schulden / totale activa en cash+beleggingen / totale activa
+# Welke stocks doorlaten (variabele HALAL_METHOD): "any" = minstens één methode (standaard),
+# "both" = beide, "aaoifi" of "msci" = alleen die methode.
+HALAL_METHOD = (os.environ.get("HALAL_METHOD") or "any").strip().lower()
+if HALAL_METHOD not in ("any", "both", "aaoifi", "msci"):
+    HALAL_METHOD = "any"
+MSCI_MAX_RATIO = 1 / 3           # schulden, cash+beleggingen / totale activa
+AAOIFI_MAX_RATIO = 0.30          # schulden, cash+beleggingen / beurswaarde
 HALAL_REFRESH_DAYS = 7           # balansgegevens opnieuw ophalen
 SIC_REFRESH_DAYS = 30            # sectorcode per bedrijf opnieuw ophalen
 # De SEC vraagt "naam e-mailadres" in de User-Agent (anders 403). Eigen waarde kan via
@@ -376,7 +382,7 @@ def stock_candidates() -> dict[str, dict]:
 
 
 def universe_cfg() -> str:
-    return f"{MIN_STOCK_VOLUME:g}"
+    return f"{MIN_STOCK_VOLUME:g}|v2"
 
 
 def sec_get(url: str):
@@ -430,27 +436,72 @@ def sec_balances() -> dict[int, dict[str, float]]:
     return out
 
 
-def halal_reason(ticker: str, sic: int | None, bal: dict[str, float] | None) -> str:
-    """Lege string = halal. Anders de reden van uitsluiting."""
+SHARE_TAGS = ["WeightedAverageNumberOfDilutedSharesOutstanding",
+              "WeightedAverageNumberOfSharesOutstandingBasic"]
+
+
+def sec_shares() -> dict[int, float]:
+    """Aantal aandelen per CIK (alle aandelenklassen samen), meest recente kwartaal."""
+    out: dict[int, float] = {}
+    for q in recent_quarters():
+        for tag in SHARE_TAGS:
+            data = sec_get(f"https://data.sec.gov/api/xbrl/frames/us-gaap/{tag}/shares/{q[:-1]}.json")
+            for d in (data or {}).get("data", []):
+                if d["cik"] not in out and d["val"] > 0:
+                    out[d["cik"]] = float(d["val"])
+            time.sleep(0.15)
+    return out
+
+
+def halal_reasons(ticker: str, sic: int | None, bal: dict[str, float] | None,
+                  shares: float | None, price: float | None) -> dict[str, str]:
+    """Per methode een lege string (= halal) of de reden van uitsluiting."""
+    def both(why: str) -> dict[str, str]:
+        return {"aaoifi": why, "msci": why}
+
     if ticker in HALAL_EXCLUDED_TICKERS:
-        return HALAL_EXCLUDED_TICKERS[ticker]
+        return both(HALAL_EXCLUDED_TICKERS[ticker])
     if sic is None:
-        return "geen SEC-gegevens"
+        return both("geen SEC-gegevens")
     for lo, hi, why in HALAL_EXCLUDED_SIC:
         if lo <= sic <= hi:
-            return why
+            return both(why)
     if not bal:
-        return "geen balans (US-GAAP)"
+        return both("geen balans (US-GAAP)")
     g = lambda k: bal.get(k, 0.0)
     debt = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
             or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent")) + g("ShortTermBorrowings")
     cash = g("CashAndCashEquivalentsAtCarryingValue") + (g("ShortTermInvestments")
                                                          or g("MarketableSecuritiesCurrent"))
-    if debt / bal["Assets"] >= HALAL_MAX_RATIO:
-        return f"schulden {debt / bal['Assets']:.0%} van activa"
-    if cash / bal["Assets"] >= HALAL_MAX_RATIO:
-        return f"cash {cash / bal['Assets']:.0%} van activa"
-    return ""
+
+    def ratios(base: float, limit: float, label: str) -> str:
+        if debt / base >= limit:
+            return f"schulden {debt / base:.0%} van {label}"
+        if cash / base >= limit:
+            return f"cash {cash / base:.0%} van {label}"
+        return ""
+
+    mcap = (shares or 0) * (price or 0)
+    return {"msci": ratios(bal["Assets"], MSCI_MAX_RATIO, "activa"),
+            "aaoifi": ratios(mcap, AAOIFI_MAX_RATIO, "beurswaarde") if mcap > 0
+            else "geen beurswaarde"}
+
+
+def halal_pass(res: dict[str, str] | None) -> bool:
+    if not isinstance(res, dict):
+        return False
+    a, m = res.get("aaoifi") == "", res.get("msci") == ""
+    return {"any": a or m, "both": a and m, "aaoifi": a, "msci": m}[HALAL_METHOD]
+
+
+def halal_label(res: dict[str, str]) -> str:
+    return " · ".join(f"{name} {'✅' if res.get(key) == '' else '❌'}"
+                      for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")))
+
+
+def halal_universe(liquid: dict, halal: dict) -> dict:
+    return {t: {**v, "halal": halal_label(halal[t])} for t, v in liquid.items()
+            if halal_pass(halal.get(t))}
 
 
 def apply_halal(state: dict) -> None:
@@ -462,8 +513,10 @@ def apply_halal(state: dict) -> None:
     today = datetime.now(timezone.utc).date()
     fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
     halal = state.get("halal", {})
+    if state.get("halal_ver") != 2:
+        fresh, halal = False, {}
     if fresh and all(t in halal for t in liquid):
-        state["universe"] = {t: v for t, v in liquid.items() if halal[t] == ""}
+        state["universe"] = halal_universe(liquid, halal)
         return
     try:
         log(f"Halal: {len(liquid)} stocks controleren via SEC...")
@@ -480,24 +533,30 @@ def apply_halal(state: dict) -> None:
                 sic_cache[str(cik)] = [sic, today.isoformat()]
                 time.sleep(0.12)
         balances = sec_balances()
+        shares = sec_shares()
     except Exception as e:
         log(f"Halal: SEC-gegevens ophalen mislukt ({e}), vorige resultaten gebruikt")
-        state["universe"] = {t: v for t, v in liquid.items() if halal.get(t) == ""}
+        state["universe"] = halal_universe(liquid, {t: halal.get(t) for t in liquid if t in halal})
         return
     halal = {}
-    for t in liquid:
+    for t, v in liquid.items():
         cik = cik_of.get(t)
         sic = sic_cache.get(str(cik), [None])[0] if cik else None
-        halal[t] = halal_reason(t, sic, balances.get(cik) if cik else None)
-    state["halal"], state["halal_date"] = halal, today.isoformat()
-    state["universe"] = {t: v for t, v in liquid.items() if halal[t] == ""}
-    reasons: dict[str, int] = {}
-    for why in halal.values():
-        if why:
-            key = why.split(" ")[0] if "%" in why else why
-            reasons[key] = reasons.get(key, 0) + 1
-    log(f"Halal: {len(state['universe'])} van {len(liquid)} ok · uitgesloten: "
-        + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items(), key=lambda x: -x[1])))
+        halal[t] = halal_reasons(t, sic, balances.get(cik) if cik else None,
+                                 shares.get(cik) if cik else None, v.get("price"))
+    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 2
+    state["universe"] = halal_universe(liquid, halal)
+    for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
+        reasons: dict[str, int] = {}
+        for res in halal.values():
+            why = res[key]
+            if why:
+                k = " ".join(why.split(" ")[:1] + why.split(" ")[2:]) if "%" in why else why
+                reasons[k] = reasons.get(k, 0) + 1
+        ok = sum(1 for res in halal.values() if res[key] == "")
+        log(f"Halal {name}: {ok} van {len(liquid)} ok · uitgesloten: "
+            + ", ".join(f"{k} {n}" for k, n in sorted(reasons.items(), key=lambda x: -x[1])))
+    log(f"Halal: {len(state['universe'])} stocks doorgelaten (methode: {HALAL_METHOD})")
 
 
 def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
@@ -514,7 +573,7 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
         if (df["close"].iloc[-1] < MIN_PRICE or df["volume"].tail(20).mean() < MIN_AVG_VOLUME
                 or dollar_vol < MIN_STOCK_VOLUME):
             continue
-        universe[t] = {**candidates[t], "vol": dollar_vol}
+        universe[t] = {**candidates[t], "vol": dollar_vol, "price": float(df["close"].iloc[-1])}
         daily[t] = df
     log(f"Stocks: {len(universe)} na filter (prijs > ${MIN_PRICE:g}, volume > {MIN_AVG_VOLUME:,}, "
         f"dagvolume > {fmt_vol(MIN_STOCK_VOLUME)})")
@@ -600,7 +659,8 @@ def format_signal(s: dict) -> str:
     return (f"🔔 <code>{ticker}</code> HH + HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
             f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}, +{(s['hh'] / s['prev_h'] - 1) * 100:.1f}%) · "
             f"HL {fmt(s['hl'])} (vorige {fmt(s['prev_l'])})\n"
-            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>")
+            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>"
+            + (f"\n☪️ {s['halal']}" if s.get("halal") else ""))
 
 
 def send_telegram(messages: list[str]) -> None:
@@ -652,7 +712,8 @@ def main() -> int:
     signals: list[dict] = []
     log("Timeframes: " + ", ".join(f"{tf} ({n} candles)" for tf, n in PIVOT_LEN.items()))
     log(f"Minimum dagvolume: crypto/goud {fmt_vol(MIN_DOLLAR_VOLUME)}, stocks {fmt_vol(MIN_STOCK_VOLUME)}"
-        f" · halal-filter stocks: {'aan' if HALAL_ONLY else 'uit'} · HH minstens {MIN_HH_PCT:g}% boven vorige top")
+        f" · halal-filter stocks: {HALAL_METHOD if HALAL_ONLY else 'uit'}"
+        f" · HH minstens {MIN_HH_PCT:g}% boven vorige top")
 
     # Crypto: 24/7
     try:

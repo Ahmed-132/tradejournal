@@ -9,11 +9,13 @@ Je krijgt alleen meldingen voor tickers met minstens **$5M dagvolume** (mediaan 
 ## Stocks: volume en halal
 
 - Stocks moeten minstens **$200M dagvolume** hebben (mediaan 20 dagen) — minder wicks en gaps. Aanpassen: variabele `MIN_VOLUME_STOCKS`, bv. `100m`. (`MIN_VOLUME` geldt dan nog voor crypto en goud.)
-- **Halal-filter** (standaard aan, uitzetten met variabele `HALAL` = `0`), volgens de MSCI Islamic-methode met officiële SEC-gegevens:
-  - uitgesloten activiteiten (SIC-code + lijst): banken, verzekeraars en andere financiële diensten, alcohol, tabak, varkensvlees, wapens, hotels/casino's, gokken, film/entertainment;
-  - schulden < 33% en cash + kortlopende beleggingen < 33% van de totale activa (laatste kwartaalcijfers).
+- **Halal-filter** (standaard aan, uitzetten met variabele `HALAL` = `0`). Elk aandeel wordt gecontroleerd volgens **AAOIFI** én **MSCI Islamic**, met officiële SEC-gegevens. In de melding staat welke methode het haalt (bv. `☪️ AAOIFI ✅ · MSCI ❌`).
+  - Beide: geen verboden kernactiviteit (banken, verzekeraars en andere financiële diensten, alcohol, tabak, varkensvlees, wapens, hotels/casino's, gokken, film/entertainment).
+  - **AAOIFI**: schulden < 30% en cash + kortlopende beleggingen < 30% van de **beurswaarde**.
+  - **MSCI**: schulden < 33% en cash + kortlopende beleggingen < 33% van de **totale activa**.
+  - Variabele `HALAL_METHOD`: `any` (standaard: minstens één methode), `both` (beide), `aaoifi` of `msci`.
   - Buitenlandse bedrijven zonder US-GAAP-cijfers (bv. ASML, TSM) worden overgeslagen omdat ze niet gecontroleerd kunnen worden.
-  - Niet gecontroleerd: het aandeel verboden inkomsten (< 5%). Controleer een aandeel bij twijfel in een app als Zoya of Musaffa.
+  - Niet gecontroleerd: het aandeel verboden inkomsten (< 5%).
   - Balanscijfers worden wekelijks vernieuwd, sectorcodes maandelijks.
 
 ## Minimum hoogte van de HH
