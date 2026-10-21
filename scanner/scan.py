@@ -32,7 +32,7 @@ import requests
 # Timeframes + aantal candles links en rechts om een top/bodem te bevestigen.
 # In te stellen via de omgevingsvariabele TIMEFRAMES, bv. "4h:2,1d:2".
 SUPPORTED_TF = ("1h", "2h", "4h", "1d", "1w")
-DEFAULT_TIMEFRAMES = "4h:2,1d:2"
+DEFAULT_TIMEFRAMES = "4h:2"
 TV_INTERVAL = {"1h": "60", "2h": "120", "4h": "240", "1d": "D", "1w": "W"}
 
 
