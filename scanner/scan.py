@@ -106,7 +106,7 @@ HALAL_EXCLUDED_SIC = [
     (2011, 2013, "vlees/varkensvlees"), (2082, 2085, "alcohol"), (2100, 2199, "tabak"),
     (3480, 3489, "wapens"), (3760, 3769, "wapens/raketten"), (3795, 3795, "wapens"),
     (6000, 6411, "bank/verzekering/financiële diensten"), (7011, 7011, "hotels/casino's"),
-    (7800, 7849, "film/entertainment"), (7990, 7999, "gokken/amusement"),
+    (7800, 7849, "film/entertainment"), (7990, 7999, "amusement/entertainment/gokken"),
 ]
 # Bedrijven die de SIC-code niet vangt (bv. alcohol onder 'beverages', defensie).
 HALAL_EXCLUDED_TICKERS = {
