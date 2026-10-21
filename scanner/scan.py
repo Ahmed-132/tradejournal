@@ -487,6 +487,39 @@ def halal_reasons(ticker: str, sic: int | None, bal: dict[str, float] | None,
             else "geen beurswaarde"}
 
 
+def halal_check_report(tickers: list[str]) -> list[str]:
+    """Controleert losse tickers en geeft per ticker een leesbaar resultaat (voor Telegram)."""
+    tickers = [t.strip().upper().replace(".", "-") for t in tickers if t.strip()]
+    closes = {t: float(df["close"].iloc[-1]) for t, df in yahoo_download(tickers, "1mo", "1d").items()}
+    rows = sec_get("https://www.sec.gov/files/company_tickers.json") or {}
+    cik_of = {r["ticker"].upper().replace(".", "-"): int(r["cik_str"]) for r in rows.values()}
+    balances, shares = sec_balances(), sec_shares()
+    out = []
+    for t in tickers:
+        cik = cik_of.get(t)
+        sub = sec_get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json") if cik else {}
+        sic = int(sub["sic"]) if str((sub or {}).get("sic", "")).isdigit() else None
+        bal = balances.get(cik) if cik else None
+        sh, price = (shares.get(cik) if cik else None), closes.get(t)
+        res = halal_reasons(t, sic, bal, sh, price)
+        lines = [f"<b>{t}</b> — {(sub or {}).get('sicDescription', '?')} (SIC {sic})"]
+        if bal:
+            g = lambda k: bal.get(k, 0.0)
+            debt = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
+                    or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent")) + g("ShortTermBorrowings")
+            cash = g("CashAndCashEquivalentsAtCarryingValue") + (g("ShortTermInvestments")
+                                                                 or g("MarketableSecuritiesCurrent"))
+            mcap = (sh or 0) * (price or 0)
+            lines.append(f"Schulden {fmt_vol(debt)} · cash+beleggingen {fmt_vol(cash)} · "
+                         f"activa {fmt_vol(bal['Assets'])} · beurswaarde {fmt_vol(mcap)}")
+        for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
+            why = res[key]
+            lines.append(f"{name}: {'✅ halal' if not why else '❌ ' + why}")
+        out.append("\n".join(lines))
+        time.sleep(0.12)
+    return out
+
+
 def halal_pass(res: dict[str, str] | None) -> bool:
     if not isinstance(res, dict):
         return False
@@ -701,6 +734,13 @@ def main() -> int:
     dry_run = "--dry-run" in sys.argv
     if "--test-telegram" in sys.argv:
         send_telegram(["✅ HH/HL scanner: testbericht, Telegram werkt."])
+        return 0
+    if os.environ.get("HALAL_CHECK", "").strip():
+        report = halal_check_report(re.split(r"[,\s]+", os.environ["HALAL_CHECK"]))
+        for r in report:
+            log(r.replace("\n", " | "))
+        send_telegram(["☪️ <b>Halal-controle</b> (AAOIFI: max 30% van beurswaarde · MSCI: max 33% van activa)"]
+                      + report)
         return 0
 
     state = load_state()

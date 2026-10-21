@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "1,31 * * * *" # reserve; cron-job.org start de scanner op :01 en :31
   workflow_dispatch:
+    inputs:
+      halal_check:
+        description: "Alleen halal-controle voor deze tickers (bv. NKE,DIS). Leeg = normale scan."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -39,6 +44,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HALAL_CHECK: ${{ inputs.halal_check }}
           TIMEFRAMES: ${{ vars.TIMEFRAMES }}
           MIN_VOLUME: ${{ vars.MIN_VOLUME }}
           MIN_VOLUME_STOCKS: ${{ vars.MIN_VOLUME_STOCKS }}
