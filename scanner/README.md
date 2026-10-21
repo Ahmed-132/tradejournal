@@ -18,6 +18,10 @@ Je krijgt alleen meldingen voor tickers met minstens **$5M dagvolume** (mediaan 
   - Niet gecontroleerd: het aandeel verboden inkomsten (< 5%).
   - Balanscijfers worden wekelijks vernieuwd, sectorcodes maandelijks.
 
+## Crypto-filter
+
+Munten van platformen die uitlenen tegen rente of rentedragende producten maken (bv. AAVE, COMP, PENDLE, ONDO) en munten van gokplatformen (bv. WIN, FUN) worden niet gescand. De lijst staat bovenaan `scanner/scan.py` (`CRYPTO_EXCLUDED`). Uitzetten: variabele `CRYPTO_HALAL` = `0`.
+
 ## Minimum hoogte van de HH
 
 Een nieuwe top telt pas als Higher High als hij minstens **1%** boven de vorige top ligt; minder is eerder een dubbele top. Aanpassen: variabele `MIN_HH_PCT`, bv. `0.5` of `2`.

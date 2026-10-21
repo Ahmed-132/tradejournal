@@ -131,6 +131,15 @@ STABLECOINS = {
     "USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "PAX", "EUR", "EURI", "AEUR",
     "GBP", "USDE", "XUSD", "BFUSD", "USD1", "RLUSD", "PYUSD", "UST", "USDS", "U",
 }
+# Crypto die niet toegelaten is: munten van platformen die uitlenen tegen rente of
+# rentedragende producten maken, en munten van gokplatformen. Uitzetten: CRYPTO_HALAL=0.
+CRYPTO_HALAL = os.environ.get("CRYPTO_HALAL", "1").strip().lower() not in ("0", "false", "no", "nee", "off")
+CRYPTO_EXCLUDED = {
+    **dict.fromkeys(["AAVE", "COMP", "MKR", "SKY", "XVS", "JST", "QI", "RDNT", "MORPHO", "KMNO",
+                     "EUL", "SPELL", "PENDLE", "LISTA", "ALPACA", "CREAM", "TRU", "SYRUP",
+                     "ONDO"], "rente/uitlenen"),
+    **dict.fromkeys(["WIN", "FUN", "DICE", "RLB", "SHFL"], "gokken"),
+}
 TV_EXCHANGE = {"Q": "NASDAQ", "N": "NYSE", "A": "AMEX", "P": "AMEX", "Z": "CBOE"}
 JUNK_NAME = re.compile(
     r"warrant|\bunits?\b|\brights?\b|preferred|\bnotes?\b|debenture|%", re.I
@@ -197,6 +206,7 @@ def binance_symbols() -> list[str]:
         if (s["status"] == "TRADING" and s["quoteAsset"] == "USDT"
                 and s.get("isSpotTradingAllowed", True)
                 and base not in STABLECOINS
+                and not (CRYPTO_HALAL and base in CRYPTO_EXCLUDED)
                 and not base.endswith(("UP", "DOWN", "BULL", "BEAR"))):
             out.append(s["symbol"])
     return sorted(out)

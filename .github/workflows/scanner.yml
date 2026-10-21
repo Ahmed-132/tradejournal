@@ -50,6 +50,7 @@ jobs:
           MIN_VOLUME_STOCKS: ${{ vars.MIN_VOLUME_STOCKS }}
           HALAL: ${{ vars.HALAL }}
           HALAL_METHOD: ${{ vars.HALAL_METHOD }}
+          CRYPTO_HALAL: ${{ vars.CRYPTO_HALAL }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           MIN_HH_PCT: ${{ vars.MIN_HH_PCT }}
 
