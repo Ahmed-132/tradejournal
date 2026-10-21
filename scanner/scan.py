@@ -139,6 +139,15 @@ CRYPTO_EXCLUDED = {
                      "EUL", "SPELL", "PENDLE", "LISTA", "ALPACA", "CREAM", "TRU", "SYRUP",
                      "ONDO"], "rente/uitlenen"),
     **dict.fromkeys(["WIN", "FUN", "DICE", "RLB", "SHFL"], "gokken"),
+    **dict.fromkeys(["WLFI"], "rente/uitlenen"),
+    # Meme-coins: geen nut of project, prijs alleen door hype (gokken/gharar).
+    **dict.fromkeys(["DOGE", "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "MEME", "BOME", "1000SATS",
+                     "TURBO", "NEIRO", "PEOPLE", "1MBABYDOGE", "BABYDOGE", "TRUMP", "PNUT", "ACT",
+                     "GOAT", "MOODENG", "BRETT", "POPCAT", "DOGS", "PENGU", "MUBARAK",
+                     "BROCCOLI714", "TST", "1000CHEEMS", "1000CAT", "TUT", "BANANAS31", "PUMP",
+                     "CHILLGUY", "SPX", "FARTCOIN", "MELANIA", "HIPPO", "LUNC", "USTC", "BANANA",
+                     "MEW", "SLERF", "MYRO", "BOOK", "WOJAK", "LADYS", "AIDOGE", "ELON", "CAT",
+                     "SUNDOG", "PONKE", "GIGA", "MOG", "BABY", "DEGEN"], "meme-coin"),
 }
 TV_EXCHANGE = {"Q": "NASDAQ", "N": "NYSE", "A": "AMEX", "P": "AMEX", "Z": "CBOE"}
 JUNK_NAME = re.compile(

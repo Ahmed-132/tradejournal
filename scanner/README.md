@@ -20,7 +20,7 @@ Je krijgt alleen meldingen voor tickers met minstens **$5M dagvolume** (mediaan 
 
 ## Crypto-filter
 
-Munten van platformen die uitlenen tegen rente of rentedragende producten maken (bv. AAVE, COMP, PENDLE, ONDO) en munten van gokplatformen (bv. WIN, FUN) worden niet gescand. De lijst staat bovenaan `scanner/scan.py` (`CRYPTO_EXCLUDED`). Uitzetten: variabele `CRYPTO_HALAL` = `0`.
+Munten van platformen die uitlenen tegen rente of rentedragende producten maken (bv. AAVE, COMP, PENDLE, ONDO) munten van gokplatformen (bv. WIN, FUN) en meme-coins (bv. DOGE, SHIB, PEPE) worden niet gescand. De lijst staat bovenaan `scanner/scan.py` (`CRYPTO_EXCLUDED`). Uitzetten: variabele `CRYPTO_HALAL` = `0`.
 
 ## Minimum hoogte van de HH
 
