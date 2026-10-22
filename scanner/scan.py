@@ -163,8 +163,7 @@ JUNK_NAME = re.compile(
 )
 
 # yfinance geeft veel pandas-waarschuwingen (onschuldig); die maken het log onleesbaar.
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore")
 
 http = requests.Session()
 http.headers["User-Agent"] = "Mozilla/5.0 (hh-hl-scanner)"
