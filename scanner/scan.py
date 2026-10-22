@@ -19,6 +19,7 @@ import os
 import re
 import sys
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -158,6 +159,10 @@ TV_EXCHANGE = {"Q": "NASDAQ", "N": "NYSE", "A": "AMEX", "P": "AMEX", "Z": "CBOE"
 JUNK_NAME = re.compile(
     r"warrant|\bunits?\b|\brights?\b|preferred|\bnotes?\b|debenture|%", re.I
 )
+
+# yfinance geeft veel pandas-waarschuwingen (onschuldig); die maken het log onleesbaar.
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 http = requests.Session()
 http.headers["User-Agent"] = "Mozilla/5.0 (hh-hl-scanner)"
