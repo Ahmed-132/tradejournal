@@ -765,8 +765,7 @@ def format_signal(s: dict) -> str:
     return (f"🔔 <code>{ticker}</code> HH + HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
             f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}, +{(s['hh'] / s['prev_h'] - 1) * 100:.1f}%) · "
             f"HL {fmt(s['hl'])} (vorige {fmt(s['prev_l'])})\n"
-            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>"
-            + (f"\n☪️ {s['halal']}" if s.get("halal") else ""))
+            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>")
 
 
 def send_telegram(messages: list[str]) -> None:

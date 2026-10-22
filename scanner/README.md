@@ -9,7 +9,7 @@ Je krijgt alleen meldingen voor tickers met minstens **$10M dagvolume** (mediaan
 ## Stocks: volume en halal
 
 - Stocks moeten minstens **$10M dagvolume** hebben (mediaan 20 dagen). Aanpassen: variabele `MIN_VOLUME_STOCKS`, bv. `100m`. (`MIN_VOLUME` geldt dan nog voor crypto en goud.)
-- **Halal-filter** (standaard aan, uitzetten met variabele `HALAL` = `0`). Elk aandeel wordt gecontroleerd volgens **AAOIFI** én **MSCI Islamic**, met officiële SEC-gegevens. In de melding staat welke methode het haalt (bv. `☪️ AAOIFI ✅ · MSCI ❌`).
+- **Halal-filter** (standaard aan, uitzetten met variabele `HALAL` = `0`). Elk aandeel wordt gecontroleerd volgens **AAOIFI** én **MSCI Islamic**, met officiële SEC-gegevens..
   - Beide: geen verboden kernactiviteit (banken, verzekeraars en andere financiële diensten, alcohol, tabak, varkensvlees, wapens, hotels/casino's, gokken, film/entertainment).
   - **AAOIFI**: schulden < 30% en cash + kortlopende beleggingen < 30% van de **beurswaarde**.
   - **MSCI**: schulden < 33% en cash + kortlopende beleggingen < 33% van de **totale activa**.
