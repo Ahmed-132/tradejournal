@@ -125,6 +125,7 @@ HALAL_EXCLUDED_TICKERS = {
 # Een signaal telt als het op een van de laatste N gesloten candles ontstond
 # (vangt een gemiste of vertraagde run op; dubbele meldingen worden voorkomen).
 RECENT_BARS = 3
+SIGNAL_MAX_AGE = RECENT_BARS  # momentopname-modus zet dit hoger
 
 GOLD = {"yahoo": "GC=F", "name": "GOLD", "tv": "COMEX:GC1!"}
 
@@ -214,16 +215,22 @@ def find_signal(df: pd.DataFrame, length: int) -> dict | None:
         l1 = l[h0 + 1:h1].min()
         l2 = l[h1 + 1:h2].min()
         if h[h2] >= h[h1] * (1 + MIN_HH_PCT / 100) and l2 > l1:
-            signal = {"bar": j, "top": h2, "hh": h[h2], "prev_h": h[h1], "hl": l2, "prev_l": l1}
+            i1 = h0 + 1 + int(l[h0 + 1:h1].argmin())
+            i2 = h1 + 1 + int(l[h1 + 1:h2].argmin())
+            signal = {"bar": j, "top": h2, "hh": h[h2], "prev_h": h[h1], "hl": l2, "prev_l": l1,
+                      "pts": {"L1": i1, "H1": h1, "L2": i2, "H2": h2}}
 
-    # Is de HL sinds de nieuwe top al gebroken (nieuwe low eronder)? Dan is de structuur
-    # kapot en sturen we geen melding meer.
-    if signal and l[signal["top"] + 1:].min() <= signal["hl"]:
+    if not signal:
         return None
-    if signal and signal["bar"] >= n - RECENT_BARS:
+    # Structuur kapot: de HL is sinds de nieuwe top gebroken, of er kwam al een nieuwere
+    # top die geen HH was. Dan geen melding.
+    if l[signal["top"] + 1:].min() <= signal["hl"] or tops[-1] != signal["top"]:
+        return None
+    if signal["bar"] >= n - SIGNAL_MAX_AGE:
         signal.pop("top")
         signal["time"] = df.index[signal["bar"]]
         signal["close"] = float(df["close"].iloc[-1])
+        signal["chart"] = df  # voor de afbeelding
         return signal
     return None
 
@@ -773,6 +780,83 @@ def format_signal(s: dict) -> str:
             f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>")
 
 
+def render_chart(s: dict) -> bytes:
+    """PNG van de chart met L1, H1, L2, H2 gemarkeerd (TradingView-achtige donkere stijl)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    df, pts = s["chart"], s["pts"]
+    start = max(0, min(pts["L1"] - 12, len(df) - 70))
+    d = df.iloc[start:]
+    x = range(len(d))
+    bg, up, down, grid, text = "#131722", "#26a69a", "#ef5350", "#2a2e39", "#d1d4dc"
+    fig, ax = plt.subplots(figsize=(9, 5), dpi=110)
+    fig.patch.set_facecolor(bg)
+    ax.set_facecolor(bg)
+    width = 0.6
+    for xi, (o, hi, lo, c) in zip(x, d[["open", "high", "low", "close"]].to_numpy(float)):
+        col = up if c >= o else down
+        ax.vlines(xi, lo, hi, color=col, linewidth=1)
+        ax.add_patch(plt.Rectangle((xi - width / 2, min(o, c)), width, max(abs(c - o), 1e-12),
+                                   color=col))
+    px = {k: v - start for k, v in pts.items()}
+    py = {"L1": s["prev_l"], "H1": s["prev_h"], "L2": s["hl"], "H2": s["hh"]}
+    order = ["L1", "H1", "L2", "H2"]
+    ax.plot([px[k] for k in order], [py[k] for k in order], color="#f0b90b", linewidth=1.6, zorder=3)
+    for k in order:
+        is_top = k.startswith("H")
+        ax.annotate(k + (" (HH)" if k == "H2" else " (HL)" if k == "L2" else ""), (px[k], py[k]),
+                    xytext=(0, 10 if is_top else -16), textcoords="offset points", ha="center",
+                    color="#f0b90b", fontsize=9, fontweight="bold", zorder=4)
+        ax.scatter([px[k]], [py[k]], color="#f0b90b", s=18, zorder=4)
+    ax.axhline(s["hl"], color="#f0b90b", linestyle=":", linewidth=1)
+    ax.set_xlim(-1, len(d) + 1)
+    ticks = list(range(0, len(d), max(1, len(d) // 6)))
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([d.index[t].strftime("%d/%m %H:%M") for t in ticks], color=text, fontsize=8)
+    ax.tick_params(colors=text, labelsize=8)
+    ax.yaxis.tick_right()
+    ax.grid(color=grid, linewidth=0.6)
+    for sp in ax.spines.values():
+        sp.set_color(grid)
+    name = s["tv"].split(":")[-1]
+    ax.set_title(f"{name} · {s['tf']} · HH +{(s['hh'] / s['prev_h'] - 1) * 100:.1f}%",
+                 color=text, fontsize=12, loc="left")
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=bg)
+    plt.close(fig)
+    return buf.getvalue()
+
+
+def send_alerts(signals: list[dict]) -> None:
+    """Per signaal een foto van de chart met de melding als onderschrift (tekst als het mislukt)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        log("Geen TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID ingesteld, alleen geprint.")
+        return
+    for s in signals:
+        caption = format_signal(s)
+        try:
+            png = render_chart(s)
+            r = http.post(f"https://api.telegram.org/bot{token}/sendPhoto", timeout=60,
+                          data={"chat_id": chat, "caption": caption, "parse_mode": "HTML"},
+                          files={"photo": ("chart.png", png, "image/png")})
+            if r.status_code == 429:  # te snel: wachten en opnieuw
+                time.sleep(int(r.json().get("parameters", {}).get("retry_after", 5)) + 1)
+                r = http.post(f"https://api.telegram.org/bot{token}/sendPhoto", timeout=60,
+                              data={"chat_id": chat, "caption": caption, "parse_mode": "HTML"},
+                              files={"photo": ("chart.png", png, "image/png")})
+            if not r.ok:
+                raise RuntimeError(f"{r.status_code} {r.text[:200]}")
+        except Exception as e:
+            log(f"Foto voor {s['name']} mislukt ({e}), tekst gestuurd")
+            send_telegram([caption])
+        time.sleep(1.1)
+
+
 def send_telegram(messages: list[str]) -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
@@ -800,6 +884,41 @@ def send_telegram(messages: list[str]) -> None:
 # ------------------------------------------------------------------------ main
 
 
+SNAPSHOT_PHOTOS = int(os.environ.get("SNAPSHOT_PHOTOS") or 40)
+
+
+def snapshot() -> int:
+    """Alle tickers die NU aan de voorwaarden voldoen (HH + HL, HL niet gebroken, laatste top
+    is de HH), ongeacht hoe oud het signaal is. Stuurt een overzicht + foto's (hoogste volume eerst)."""
+    global SIGNAL_MAX_AGE
+    SIGNAL_MAX_AGE = 10 ** 9
+    state = load_state()
+    now_et = datetime.now(timezone.utc).astimezone(ET).replace(tzinfo=None)
+    signals: list[dict] = []
+    for name, fn in (("crypto", scan_crypto), ("goud", lambda: scan_gold(now_et)),
+                     ("stocks", lambda: scan_stocks_intraday(state, now_et))):
+        try:
+            got = fn()
+            log(f"Momentopname {name}: {len(got)} voldoen")
+            signals += got
+        except Exception as e:
+            log(f"Momentopname {name} mislukt: {e}")
+    signals = [s for s in signals if s.get("vol", 0.0) >= MIN_DOLLAR_VOLUME]
+    signals.sort(key=lambda s: s.get("vol", 0.0), reverse=True)
+    for s in signals:
+        log(format_signal(s).replace("\n", " | "))
+    tfs = ", ".join(PIVOT_LEN)
+    head = (f"📸 <b>Momentopname</b> ({tfs}): {len(signals)} tickers voldoen nu aan HH + HL "
+            f"(HL nog niet gebroken). Foto's van de {min(len(signals), SNAPSHOT_PHOTOS)} "
+            f"met het hoogste volume:")
+    send_telegram([head])
+    send_alerts(signals[:SNAPSHOT_PHOTOS])
+    rest = signals[SNAPSHOT_PHOTOS:]
+    if rest:
+        send_telegram(["Ook nog: " + ", ".join(f"<code>{s['tv'].split(':')[-1]}</code>" for s in rest)])
+    return 0
+
+
 def load_state() -> dict:
     try:
         return json.loads(STATE_FILE.read_text())
@@ -812,6 +931,8 @@ def main() -> int:
     if "--test-telegram" in sys.argv:
         send_telegram(["✅ HH/HL scanner: testbericht, Telegram werkt."])
         return 0
+    if os.environ.get("SNAPSHOT", "").strip() in ("1", "true", "ja", "yes"):
+        return snapshot()
     if os.environ.get("QUALITY_REPORT", "").strip() in ("1", "true", "ja", "yes"):
         report = quality_report(load_state())
         for r in report:
@@ -899,8 +1020,8 @@ def main() -> int:
 
     if dry_run:
         return 0
-    if messages:
-        send_telegram(messages)
+    if new:
+        send_alerts(new)
 
     # Oude meldingen (> 60 dagen) opruimen
     cutoff = (now_utc - timedelta(days=60)).isoformat()
