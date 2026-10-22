@@ -571,7 +571,7 @@ def quality_report(state: dict) -> list[str]:
         for s, df in zip(active, pool.map(lambda s: binance_klines(s, "4h", now_ms), active)):
             if df is not None and len(df) > QUALITY_BARS:
                 groups["crypto"][s] = chart_quality(df)
-    universe = state.get("liquid") or state.get("universe") or {}
+    universe = state.get("universe") or state.get("liquid") or {}  # na halal-filter
     for t, df in yahoo_download(list(universe), "60d", "1h").items():
         d4 = stock_hours(stock_1h(df, now_et), 4, now_et)
         if len(d4) > QUALITY_BARS:
