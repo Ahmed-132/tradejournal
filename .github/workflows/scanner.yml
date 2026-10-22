@@ -50,9 +50,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HALAL_CHECK: ${{ inputs.halal_check }}
           QUALITY_REPORT: ${{ inputs.quality_report }}
-          MIN_BODY: ${{ vars.MIN_BODY }}
-          MAX_GAPS: ${{ vars.MAX_GAPS }}
-          MAX_GAPS_STOCKS: ${{ vars.MAX_GAPS_STOCKS }}
           TIMEFRAMES: ${{ vars.TIMEFRAMES }}
           MIN_VOLUME: ${{ vars.MIN_VOLUME }}
           MIN_VOLUME_STOCKS: ${{ vars.MIN_VOLUME_STOCKS }}
