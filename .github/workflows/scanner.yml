@@ -10,7 +10,7 @@ on:
         required: false
         default: ""
       snapshot:
-        description: "Zet op 1 voor een momentopname: alle tickers die nu voldoen, met chart-foto's."
+        description: "Momentopname met chart-foto's: 1 = alles, 2 = alleen 2e HL."
         required: false
         default: ""
       quality_report:

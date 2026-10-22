@@ -937,7 +937,7 @@ def send_telegram(messages: list[str]) -> None:
 SNAPSHOT_PHOTOS = int(os.environ.get("SNAPSHOT_PHOTOS") or 40)
 
 
-def snapshot() -> int:
+def snapshot(only_kind: str | None = None) -> int:
     """Alle tickers die NU aan de voorwaarden voldoen (HH + HL, HL niet gebroken, laatste top
     is de HH), ongeacht hoe oud het signaal is. Stuurt een overzicht + foto's (hoogste volume eerst)."""
     global SIGNAL_MAX_AGE
@@ -953,13 +953,21 @@ def snapshot() -> int:
             signals += got
         except Exception as e:
             log(f"Momentopname {name} mislukt: {e}")
-    signals = [s for s in signals if s.get("vol", 0.0) >= MIN_DOLLAR_VOLUME]
+    signals = [s for s in signals if s.get("vol", 0.0) >= MIN_DOLLAR_VOLUME
+               and (only_kind is None or s.get("kind") == only_kind)]
     signals.sort(key=lambda s: s.get("vol", 0.0), reverse=True)
     for s in signals:
         log(format_signal(s).replace("\n", " | "))
+    # Onthouden als verstuurd, zodat de gewone scan ze niet nog eens stuurt
+    state.setdefault("alerts", {})
+    for s in signals:
+        key = f"{s['name']}|{s['tf']}|{s.get('kind', '')}"
+        state["alerts"][key] = max(state["alerts"].get(key, ""), pd.Timestamp(s["time"]).isoformat())
+    STATE_FILE.write_text(json.dumps(state, indent=0, sort_keys=True))
     tfs = ", ".join(PIVOT_LEN)
-    head = (f"📸 <b>Momentopname</b> ({tfs}): {len(signals)} tickers met een verse trendomkeer "
-            f"(LH gebroken + HL, HL nog niet gebroken). Foto's van de {min(len(signals), SNAPSHOT_PHOTOS)} "
+    what = "een 2e HL" if only_kind == "2e HL" else "een verse trendomkeer of 2e HL"
+    head = (f"📸 <b>Momentopname</b> ({tfs}): {len(signals)} tickers met {what} "
+            f"(laatste {SIGNAL_MAX_AGE} candles, HL nog niet gebroken). Foto's van de {min(len(signals), SNAPSHOT_PHOTOS)} "
             f"met het hoogste volume:")
     send_telegram([head])
     send_alerts(signals[:SNAPSHOT_PHOTOS])
@@ -981,8 +989,11 @@ def main() -> int:
     if "--test-telegram" in sys.argv:
         send_telegram(["✅ HH/HL scanner: testbericht, Telegram werkt."])
         return 0
-    if os.environ.get("SNAPSHOT", "").strip() in ("1", "true", "ja", "yes"):
+    snap = os.environ.get("SNAPSHOT", "").strip().lower()
+    if snap in ("1", "true", "ja", "yes", "alles"):
         return snapshot()
+    if snap in ("2", "2e", "2e hl", "hl2"):
+        return snapshot("2e HL")
     if os.environ.get("QUALITY_REPORT", "").strip() in ("1", "true", "ja", "yes"):
         report = quality_report(load_state())
         for r in report:
