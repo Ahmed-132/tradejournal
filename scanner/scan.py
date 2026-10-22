@@ -214,9 +214,14 @@ def find_signal(df: pd.DataFrame, length: int) -> dict | None:
         l1 = l[h0 + 1:h1].min()
         l2 = l[h1 + 1:h2].min()
         if h[h2] >= h[h1] * (1 + MIN_HH_PCT / 100) and l2 > l1:
-            signal = {"bar": j, "hh": h[h2], "prev_h": h[h1], "hl": l2, "prev_l": l1}
+            signal = {"bar": j, "top": h2, "hh": h[h2], "prev_h": h[h1], "hl": l2, "prev_l": l1}
 
+    # Is de HL sinds de nieuwe top al gebroken (nieuwe low eronder)? Dan is de structuur
+    # kapot en sturen we geen melding meer.
+    if signal and l[signal["top"] + 1:].min() <= signal["hl"]:
+        return None
     if signal and signal["bar"] >= n - RECENT_BARS:
+        signal.pop("top")
         signal["time"] = df.index[signal["bar"]]
         signal["close"] = float(df["close"].iloc[-1])
         return signal
