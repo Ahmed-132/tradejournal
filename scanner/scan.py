@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -186,50 +187,70 @@ def chart_quality(df: pd.DataFrame, bars: int = QUALITY_BARS) -> tuple[float, fl
 
 
 def find_signal(df: pd.DataFrame, length: int) -> dict | None:
-    """Zoekt een nieuwe Higher High die op een Higher Low volgt (L1 -> H1 -> L2 -> H2).
+    r"""Trendomkeer: de prijs breekt boven de laatste Lower High en maakt daarna een Higher Low.
 
-    Een top (pivot high) is bevestigd als er `length` lagere candles links en
-    rechts van liggen. Bij elke nieuwe bevestigde top H2 kijken we:
-      - H2 >= H1 + MIN_HH_PCT %  (de vorige top)       -> Higher High
-      - L2 > L1, met L2 = laagste low tussen H1 en H2  -> Higher Low
-                 en  L1 = laagste low tussen H0 en H1
-    Elke nieuwe HH die hieraan voldoet is een signaal (dus ook verderop in de trend).
-    De melding komt op de candle waarop H2 bevestigd wordt.
+        H0                                  
+          \    LH                 H  (nieuwe top na de break)
+           \  /  \    break -->  /\
+            \/    \  ---------- /  \
+            L0     \          /    HL   <- melding als deze bodem bevestigd is
+                    \        /
+                     LL ----
+
+    - LH  = laatste top vóór de break, lager dan de top ervoor (dus een dalende trend).
+    - Break = eerste candle die boven de LH SLUIT.
+    - LL  = laagste punt tussen LH en de break.
+    - HL  = eerste bevestigde bodem na de break, hoger dan LL.
+    - De nieuwe top na de break moet minstens MIN_HH_PCT % boven de LH liggen.
+    Melding op de candle waarop de HL bevestigd wordt (`length` candles na de bodem),
+    zolang de prijs nog niet onder de HL is gezakt.
     """
     n = len(df)
-    if n < 4 * length + 2:
+    if n < 6 * length + 4:
         return None
     h = df["high"].to_numpy(float)
     l = df["low"].to_numpy(float)
-    tops: list[int] = []  # candle-indexen van bevestigde toppen
-    signal = None
+    c = df["close"].to_numpy(float)
 
-    for j in range(2 * length, n):  # j = candle waarop de top bevestigd wordt
-        i = j - length
-        if not (h[i] > h[i - length:i].max() and h[i] >= h[i + 1:j + 1].max()):
+    def is_top(i: int) -> bool:
+        return h[i] > h[i - length:i].max() and h[i] >= h[i + 1:i + length + 1].max()
+
+    def is_bottom(i: int) -> bool:
+        return l[i] < l[i - length:i].min() and l[i] <= l[i + 1:i + length + 1].min()
+
+    tops = [i for i in range(length, n - length) if is_top(i)]
+    bottoms = [i for i in range(length, n - length) if is_bottom(i)]
+    signal = None
+    for k in bottoms:  # kandidaat-HL
+        # Laatste top vóór k die vóór k gebroken werd (slot erboven) = de LH.
+        prior = [a for a in tops if a < k]
+        lh = next((a for a in reversed(prior) if c[a + 1:k].max(initial=-math.inf) > h[a]), None)
+        if lh is None:
             continue
-        tops.append(i)
-        if len(tops) < 3:
+        idx = prior.index(lh)
+        if idx == 0 or h[lh] >= h[prior[idx - 1]]:
+            continue  # geen Lower High: de trend was niet dalend
+        b = lh + 1 + int((c[lh + 1:k] > h[lh]).argmax())  # eerste slot boven de LH
+        if any(b < x < k for x in bottoms):
+            continue  # k is niet de eerste bodem na de break
+        ll_i = lh + 1 + int(l[lh + 1:b + 1].argmin())
+        top_i = b + int(h[b:k].argmax())
+        if l[k] <= l[ll_i] or h[top_i] < h[lh] * (1 + MIN_HH_PCT / 100):
             continue
-        h0, h1, h2 = tops[-3:]
-        l1 = l[h0 + 1:h1].min()
-        l2 = l[h1 + 1:h2].min()
-        if h[h2] >= h[h1] * (1 + MIN_HH_PCT / 100) and l2 > l1:
-            i1 = h0 + 1 + int(l[h0 + 1:h1].argmin())
-            i2 = h1 + 1 + int(l[h1 + 1:h2].argmin())
-            signal = {"bar": j, "top": h2, "hh": h[h2], "prev_h": h[h1], "hl": l2, "prev_l": l1,
-                      "pts": {"L1": i1, "H1": h1, "L2": i2, "H2": h2}}
+        signal = {"bar": k + length, "hl_i": k, "hh": h[top_i], "prev_h": h[lh], "hl": l[k],
+                  "prev_l": l[ll_i],
+                  "pts": {"LH": (lh, h[lh]), "LL": (ll_i, l[ll_i]), "H": (top_i, h[top_i]),
+                          "HL": (k, l[k])},
+                  "break_i": b}
 
     if not signal:
         return None
-    # Structuur kapot: de HL is sinds de nieuwe top gebroken, of er kwam al een nieuwere
-    # top die geen HH was. Dan geen melding.
-    if l[signal["top"] + 1:].min() <= signal["hl"] or tops[-1] != signal["top"]:
+    # HL al gebroken of te oud? Geen melding.
+    if l[signal["hl_i"] + 1:].min() < signal["hl"]:
         return None
     if signal["bar"] >= n - SIGNAL_MAX_AGE:
-        signal.pop("top")
         signal["time"] = df.index[signal["bar"]]
-        signal["close"] = float(df["close"].iloc[-1])
+        signal["close"] = float(c[-1])
         signal["chart"] = df  # voor de afbeelding
         return signal
     return None
@@ -774,20 +795,21 @@ def fmt_vol(x: float) -> str:
 def format_signal(s: dict) -> str:
     chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval={TV_INTERVAL[s['tf']]}"
     ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
-    return (f"🔔 <code>{ticker}</code> HH + HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
-            f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}, +{(s['hh'] / s['prev_h'] - 1) * 100:.1f}%) · "
-            f"HL {fmt(s['hl'])} (vorige {fmt(s['prev_l'])})\n"
-            f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>")
+    above = (s["close"] / s["hl"] - 1) * 100
+    return (f"🔔 <code>{ticker}</code> trendomkeer op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
+            f"LH {fmt(s['prev_h'])} gebroken · nieuwe top {fmt(s['hh'])}\n"
+            f"HL {fmt(s['hl'])} (LL was {fmt(s['prev_l'])})\n"
+            f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. HL) · <a href=\"{chart}\">Chart</a>")
 
 
 def render_chart(s: dict) -> bytes:
-    """PNG van de chart met L1, H1, L2, H2 gemarkeerd (TradingView-achtige donkere stijl)."""
+    """PNG van de chart met LH, LL, break, H en HL gemarkeerd (TradingView-achtige donkere stijl)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     df, pts = s["chart"], s["pts"]
-    start = max(0, min(pts["L1"] - 12, len(df) - 70))
+    start = max(0, min(pts["LH"][0] - 15, len(df) - 70))
     d = df.iloc[start:]
     x = range(len(d))
     bg, up, down, grid, text = "#131722", "#26a69a", "#ef5350", "#2a2e39", "#d1d4dc"
@@ -800,13 +822,17 @@ def render_chart(s: dict) -> bytes:
         ax.vlines(xi, lo, hi, color=col, linewidth=1)
         ax.add_patch(plt.Rectangle((xi - width / 2, min(o, c)), width, max(abs(c - o), 1e-12),
                                    color=col))
-    px = {k: v - start for k, v in pts.items()}
-    py = {"L1": s["prev_l"], "H1": s["prev_h"], "L2": s["hl"], "H2": s["hh"]}
-    order = ["L1", "H1", "L2", "H2"]
+    px = {k: v[0] - start for k, v in pts.items()}
+    py = {k: v[1] for k, v in pts.items()}
+    order = ["LH", "LL", "H", "HL"]
+    # Horizontale lijn op de LH tot aan de break
+    ax.hlines(py["LH"], px["LH"], s["break_i"] - start, color="#2962ff", linewidth=1.2)
+    ax.annotate("break", (s["break_i"] - start, py["LH"]), xytext=(4, -12),
+                textcoords="offset points", color="#2962ff", fontsize=8)
     ax.plot([px[k] for k in order], [py[k] for k in order], color="#f0b90b", linewidth=1.6, zorder=3)
     for k in order:
-        is_top = k.startswith("H")
-        ax.annotate(k + (" (HH)" if k == "H2" else " (HL)" if k == "L2" else ""), (px[k], py[k]),
+        is_top = k in ("LH", "H")
+        ax.annotate(k, (px[k], py[k]),
                     xytext=(0, 10 if is_top else -16), textcoords="offset points", ha="center",
                     color="#f0b90b", fontsize=9, fontweight="bold", zorder=4)
         ax.scatter([px[k]], [py[k]], color="#f0b90b", s=18, zorder=4)
@@ -821,7 +847,7 @@ def render_chart(s: dict) -> bytes:
     for sp in ax.spines.values():
         sp.set_color(grid)
     name = s["tv"].split(":")[-1]
-    ax.set_title(f"{name} · {s['tf']} · HH +{(s['hh'] / s['prev_h'] - 1) * 100:.1f}%",
+    ax.set_title(f"{name} · {s['tf']} · trendomkeer (LH gebroken + HL)",
                  color=text, fontsize=12, loc="left")
     fig.tight_layout()
     buf = io.BytesIO()
@@ -891,7 +917,7 @@ def snapshot() -> int:
     """Alle tickers die NU aan de voorwaarden voldoen (HH + HL, HL niet gebroken, laatste top
     is de HH), ongeacht hoe oud het signaal is. Stuurt een overzicht + foto's (hoogste volume eerst)."""
     global SIGNAL_MAX_AGE
-    SIGNAL_MAX_AGE = 10 ** 9
+    SIGNAL_MAX_AGE = 6  # alleen verse omkeringen (HL bevestigd in de laatste 6 candles)
     state = load_state()
     now_et = datetime.now(timezone.utc).astimezone(ET).replace(tzinfo=None)
     signals: list[dict] = []
@@ -908,8 +934,8 @@ def snapshot() -> int:
     for s in signals:
         log(format_signal(s).replace("\n", " | "))
     tfs = ", ".join(PIVOT_LEN)
-    head = (f"📸 <b>Momentopname</b> ({tfs}): {len(signals)} tickers voldoen nu aan HH + HL "
-            f"(HL nog niet gebroken). Foto's van de {min(len(signals), SNAPSHOT_PHOTOS)} "
+    head = (f"📸 <b>Momentopname</b> ({tfs}): {len(signals)} tickers met een verse trendomkeer "
+            f"(LH gebroken + HL, HL nog niet gebroken). Foto's van de {min(len(signals), SNAPSHOT_PHOTOS)} "
             f"met het hoogste volume:")
     send_telegram([head])
     send_alerts(signals[:SNAPSHOT_PHOTOS])
