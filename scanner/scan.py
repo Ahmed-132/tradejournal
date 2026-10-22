@@ -113,7 +113,8 @@ HALAL_EXCLUDED_SIC = [
     (2011, 2013, "vlees/varkensvlees"), (2082, 2085, "alcohol"), (2100, 2199, "tabak"),
     (3480, 3489, "wapens"), (3760, 3769, "wapens/raketten"), (3795, 3795, "wapens"),
     (6000, 6411, "bank/verzekering/financiële diensten"), (7011, 7011, "hotels/casino's"),
-    (7800, 7849, "film/entertainment"), (7990, 7999, "amusement/entertainment/gokken"),
+    (4830, 4841, "media/tv/kabel (entertainment)"),
+    (7800, 7849, "film/entertainment"), (7900, 7999, "amusement/entertainment/gokken"),
 ]
 # Bedrijven die de SIC-code niet vangt (bv. alcohol onder 'beverages', defensie).
 HALAL_EXCLUDED_TICKERS = {
@@ -121,6 +122,9 @@ HALAL_EXCLUDED_TICKERS = {
     "BUD": "alcohol", "SAM": "alcohol", "MGPI": "alcohol", "ABEV": "alcohol",
     "LMT": "wapens", "NOC": "wapens", "GD": "wapens", "RTX": "wapens", "LHX": "wapens",
     "HII": "wapens", "TSN": "varkensvlees", "HRL": "varkensvlees",
+    **dict.fromkeys(["CMCSA", "FOX", "FOXA", "PARA", "PSKY", "WBD", "SIRI", "LYV", "NFLX", "DIS",
+                     "SPOT", "AMC", "CNK", "IMAX", "MSGS", "MSGE", "TKO", "EDR", "ROKU", "CHTR",
+                     "NXST", "SBGI", "GTN", "WMG", "UMG"], "media/entertainment"),
 }
 
 # Een signaal telt als het op een van de laatste N gesloten candles ontstond
@@ -651,7 +655,7 @@ def apply_halal(state: dict) -> None:
     today = datetime.now(timezone.utc).date()
     fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
     halal = state.get("halal", {})
-    if state.get("halal_ver") != 2:
+    if state.get("halal_ver") != 3:
         fresh, halal = False, {}
     if fresh and all(t in halal for t in liquid):
         state["universe"] = halal_universe(liquid, halal)
@@ -682,7 +686,7 @@ def apply_halal(state: dict) -> None:
         sic = sic_cache.get(str(cik), [None])[0] if cik else None
         halal[t] = halal_reasons(t, sic, balances.get(cik) if cik else None,
                                  shares.get(cik) if cik else None, v.get("price"))
-    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 2
+    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 3
     state["universe"] = halal_universe(liquid, halal)
     for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
         reasons: dict[str, int] = {}
