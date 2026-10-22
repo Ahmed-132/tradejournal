@@ -9,6 +9,10 @@ on:
         description: "Alleen halal-controle voor deze tickers (bv. NKE,DIS). Leeg = normale scan."
         required: false
         default: ""
+      quality_report:
+        description: "Zet op 1 voor een rapport van de chart-kwaliteit (geen scan)."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -45,6 +49,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HALAL_CHECK: ${{ inputs.halal_check }}
+          QUALITY_REPORT: ${{ inputs.quality_report }}
+          MIN_BODY: ${{ vars.MIN_BODY }}
+          MAX_GAPS: ${{ vars.MAX_GAPS }}
           TIMEFRAMES: ${{ vars.TIMEFRAMES }}
           MIN_VOLUME: ${{ vars.MIN_VOLUME }}
           MIN_VOLUME_STOCKS: ${{ vars.MIN_VOLUME_STOCKS }}

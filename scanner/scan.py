@@ -78,6 +78,13 @@ try:
 except ValueError:
     MIN_HH_PCT = 1.0
 
+# Chart-kwaliteit (laatste QUALITY_BARS candles van de timeframe van het signaal):
+#  - body: mediaan van |close-open| / (high-low). Hoog = volle candles, weinig lange wicks.
+#  - gaps: gemiddelde |open - vorige close| / gemiddelde candle-range. Laag = weinig gaps.
+QUALITY_BARS = 50
+MIN_BODY = float(os.environ.get("MIN_BODY") or 0.45)
+MAX_GAPS = float(os.environ.get("MAX_GAPS") or 0.15)
+
 # Minimum dagvolume in dollar (mediaan over 20 dagen) voor elke melding.
 # In te stellen via de omgevingsvariabele MIN_VOLUME, bv. "10m".
 MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 5e6)
@@ -165,6 +172,15 @@ def log(*args):
 # ------------------------------------------------------------------ trendlogica
 
 
+def chart_quality(df: pd.DataFrame, bars: int = QUALITY_BARS) -> tuple[float, float]:
+    """(body, gaps) over de laatste candles; zie MIN_BODY / MAX_GAPS."""
+    d = df.tail(bars + 1)
+    rng = d["high"] - d["low"]
+    body = float(((d["close"] - d["open"]).abs() / rng.where(rng > 0)).iloc[1:].median())
+    gaps = float((d["open"] - d["close"].shift()).abs().iloc[1:].mean() / rng.iloc[1:].mean())
+    return body, gaps
+
+
 def find_signal(df: pd.DataFrame, length: int) -> dict | None:
     """Zoekt een nieuwe Higher High die op een Higher Low volgt (L1 -> H1 -> L2 -> H2).
 
@@ -200,6 +216,7 @@ def find_signal(df: pd.DataFrame, length: int) -> dict | None:
     if signal and signal["bar"] >= n - RECENT_BARS:
         signal["time"] = df.index[signal["bar"]]
         signal["close"] = float(df["close"].iloc[-1])
+        signal["body"], signal["gaps"] = chart_quality(df)
         return signal
     return None
 
@@ -539,6 +556,43 @@ def halal_check_report(tickers: list[str]) -> list[str]:
     return out
 
 
+def quality_report(state: dict) -> list[str]:
+    """Verdeling van body/gaps op 4h voor crypto en stocks, om de grenzen te kiezen."""
+    now_ms = int(time.time() * 1000)
+    now_et = datetime.now(timezone.utc).astimezone(ET).replace(tzinfo=None)
+    groups: dict[str, dict[str, tuple[float, float]]] = {"crypto": {}, "stocks": {}}
+    syms = binance_symbols()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        daily = dict(zip(syms, pool.map(lambda s: binance_klines(s, "1d", now_ms), syms)))
+        active = [s for s, df in daily.items() if df is not None and len(df)
+                  and df["quote_volume"].tail(20).median() >= MIN_DOLLAR_VOLUME]
+        for s, df in zip(active, pool.map(lambda s: binance_klines(s, "4h", now_ms), active)):
+            if df is not None and len(df) > QUALITY_BARS:
+                groups["crypto"][s] = chart_quality(df)
+    universe = state.get("liquid") or state.get("universe") or {}
+    for t, df in yahoo_download(list(universe), "60d", "1h").items():
+        d4 = stock_hours(stock_1h(df, now_et), 4, now_et)
+        if len(d4) > QUALITY_BARS:
+            groups["stocks"][t] = chart_quality(d4)
+    out = []
+    for name, vals in groups.items():
+        if not vals:
+            continue
+        body = pd.Series({k: v[0] for k, v in vals.items()})
+        gaps = pd.Series({k: v[1] for k, v in vals.items()})
+        q = lambda x: " / ".join(f"{x.quantile(p):.0%}" for p in (0.1, 0.25, 0.5, 0.75, 0.9))
+        passed = sum(1 for b, g in vals.values() if b >= MIN_BODY and g <= MAX_GAPS)
+        score = body - gaps
+        out.append(
+            f"<b>{name}</b> ({len(vals)} tickers, 4h, laatste {QUALITY_BARS} candles)\n"
+            f"body p10/p25/p50/p75/p90: {q(body)}\n"
+            f"gaps p10/p25/p50/p75/p90: {q(gaps)}\n"
+            f"door filter (body ≥ {MIN_BODY:.0%}, gaps ≤ {MAX_GAPS:.0%}): {passed}\n"
+            f"mooiste: {', '.join(score.nlargest(8).index)}\n"
+            f"lelijkste: {', '.join(score.nsmallest(8).index)}")
+    return out
+
+
 def halal_pass(res: dict[str, str] | None) -> bool:
     if not isinstance(res, dict):
         return False
@@ -712,6 +766,7 @@ def format_signal(s: dict) -> str:
             f"HH {fmt(s['hh'])} (vorige {fmt(s['prev_h'])}, +{(s['hh'] / s['prev_h'] - 1) * 100:.1f}%) · "
             f"HL {fmt(s['hl'])} (vorige {fmt(s['prev_l'])})\n"
             f"Koers {fmt(s['close'])} · <a href=\"{chart}\">Chart</a>"
+            + (f" · body {s['body']:.0%} · gaps {s['gaps']:.0%}" if "body" in s else "")
             + (f"\n☪️ {s['halal']}" if s.get("halal") else ""))
 
 
@@ -753,6 +808,12 @@ def main() -> int:
     dry_run = "--dry-run" in sys.argv
     if "--test-telegram" in sys.argv:
         send_telegram(["✅ HH/HL scanner: testbericht, Telegram werkt."])
+        return 0
+    if os.environ.get("QUALITY_REPORT", "").strip() in ("1", "true", "ja", "yes"):
+        report = quality_report(load_state())
+        for r in report:
+            log(r.replace("\n", " | "))
+        send_telegram(["📊 <b>Chart-kwaliteit</b>"] + report)
         return 0
     if os.environ.get("HALAL_CHECK", "").strip():
         report = halal_check_report(re.split(r"[,\s]+", os.environ["HALAL_CHECK"]))
@@ -815,8 +876,14 @@ def main() -> int:
         except Exception as e:
             log(f"Stocks intraday scan mislukt: {e}")
 
-    # Te weinig volume: geen melding
+    # Te weinig volume of rommelige chart: geen melding
     signals = [s for s in signals if s.get("vol", 0.0) >= MIN_DOLLAR_VOLUME]
+    messy = [s for s in signals
+             if not (s.get("body", 1.0) >= MIN_BODY and s.get("gaps", 0.0) <= MAX_GAPS)]
+    signals = [s for s in signals if s not in messy]
+    if messy:
+        log(f"{len(messy)} signalen weggefilterd door rommelige chart: "
+            + ", ".join(f"{s['name']} (body {s['body']:.0%}, gaps {s['gaps']:.0%})" for s in messy[:15]))
 
     # Dubbele meldingen voorkomen
     new = []
