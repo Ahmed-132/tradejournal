@@ -8,7 +8,7 @@ Je krijgt alleen meldingen voor tickers met minstens **$5M dagvolume** (mediaan 
 
 ## Stocks: volume en halal
 
-- Stocks moeten minstens **$200M dagvolume** hebben (mediaan 20 dagen) — minder wicks en gaps. Aanpassen: variabele `MIN_VOLUME_STOCKS`, bv. `100m`. (`MIN_VOLUME` geldt dan nog voor crypto en goud.)
+- Stocks moeten minstens **$50M dagvolume** hebben (mediaan 20 dagen). Aanpassen: variabele `MIN_VOLUME_STOCKS`, bv. `100m`. (`MIN_VOLUME` geldt dan nog voor crypto en goud.)
 - **Halal-filter** (standaard aan, uitzetten met variabele `HALAL` = `0`). Elk aandeel wordt gecontroleerd volgens **AAOIFI** én **MSCI Islamic**, met officiële SEC-gegevens. In de melding staat welke methode het haalt (bv. `☪️ AAOIFI ✅ · MSCI ❌`).
   - Beide: geen verboden kernactiviteit (banken, verzekeraars en andere financiële diensten, alcohol, tabak, varkensvlees, wapens, hotels/casino's, gokken, film/entertainment).
   - **AAOIFI**: schulden < 30% en cash + kortlopende beleggingen < 30% van de **beurswaarde**.
@@ -21,6 +21,13 @@ Je krijgt alleen meldingen voor tickers met minstens **$5M dagvolume** (mediaan 
 ## Crypto-filter
 
 Munten van platformen die uitlenen tegen rente of rentedragende producten maken (bv. AAVE, COMP, PENDLE, ONDO) munten van gokplatformen (bv. WIN, FUN) en meme-coins (bv. DOGE, SHIB, PEPE) worden niet gescand. De lijst staat bovenaan `scanner/scan.py` (`CRYPTO_EXCLUDED`). Uitzetten: variabele `CRYPTO_HALAL` = `0`.
+
+## Chart-kwaliteit
+
+Alleen meldingen voor nette charts, gemeten over de laatste 50 candles van de timeframe:
+- **body** = hoe vol de candles zijn (mediaan van body / hele candle). Minimum 45% (`MIN_BODY`). Laag = veel lange wicks.
+- **gaps** = hoe groot de sprongen tussen candles zijn, t.o.v. de gemiddelde candle. Maximum 15% voor crypto/goud (`MAX_GAPS`), 18% voor stocks (`MAX_GAPS_STOCKS`), want stocks openen elke ochtend met een gap.
+- Rapport van alle tickers: Actions → Run workflow → `quality_report` = `1` (resultaat in Telegram).
 
 ## Minimum hoogte van de HH
 

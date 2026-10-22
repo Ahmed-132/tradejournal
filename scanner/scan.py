@@ -84,12 +84,14 @@ except ValueError:
 QUALITY_BARS = 50
 MIN_BODY = float(os.environ.get("MIN_BODY") or 0.45)
 MAX_GAPS = float(os.environ.get("MAX_GAPS") or 0.15)
+# Stocks hebben op 4h elke ochtend een gap (de beurs is 's nachts dicht), dus een eigen grens.
+MAX_GAPS_STOCKS = float(os.environ.get("MAX_GAPS_STOCKS") or 0.18)
 
 # Minimum dagvolume in dollar (mediaan over 20 dagen) voor elke melding.
 # In te stellen via de omgevingsvariabele MIN_VOLUME, bv. "10m".
 MIN_DOLLAR_VOLUME = parse_amount(os.environ.get("MIN_VOLUME", ""), 5e6)
 # Aparte (hogere) grens voor US stocks: minder wicks en gaps. Variabele MIN_VOLUME_STOCKS.
-MIN_STOCK_VOLUME = parse_amount(os.environ.get("MIN_VOLUME_STOCKS", ""), 200e6)
+MIN_STOCK_VOLUME = parse_amount(os.environ.get("MIN_VOLUME_STOCKS", ""), 50e6)
 
 # Halal-filter voor stocks volgens AAOIFI en MSCI Islamic (gegevens: SEC EDGAR).
 # Uitzetten: variabele HALAL=0.
@@ -581,13 +583,14 @@ def quality_report(state: dict) -> list[str]:
         body = pd.Series({k: v[0] for k, v in vals.items()})
         gaps = pd.Series({k: v[1] for k, v in vals.items()})
         q = lambda x: " / ".join(f"{x.quantile(p):.0%}" for p in (0.1, 0.25, 0.5, 0.75, 0.9))
-        passed = sum(1 for b, g in vals.values() if b >= MIN_BODY and g <= MAX_GAPS)
+        mg = MAX_GAPS_STOCKS if name == "stocks" else MAX_GAPS
+        passed = sum(1 for b, g in vals.values() if b >= MIN_BODY and g <= mg)
         score = body - gaps
         out.append(
             f"<b>{name}</b> ({len(vals)} tickers, 4h, laatste {QUALITY_BARS} candles)\n"
             f"body p10/p25/p50/p75/p90: {q(body)}\n"
             f"gaps p10/p25/p50/p75/p90: {q(gaps)}\n"
-            f"door filter (body ≥ {MIN_BODY:.0%}, gaps ≤ {MAX_GAPS:.0%}): {passed}\n"
+            f"door filter (body ≥ {MIN_BODY:.0%}, gaps ≤ {mg:.0%}): {passed}\n"
             f"mooiste: {', '.join(score.nlargest(8).index)}\n"
             f"lelijkste: {', '.join(score.nsmallest(8).index)}")
     return out
@@ -878,8 +881,11 @@ def main() -> int:
 
     # Te weinig volume of rommelige chart: geen melding
     signals = [s for s in signals if s.get("vol", 0.0) >= MIN_DOLLAR_VOLUME]
-    messy = [s for s in signals
-             if not (s.get("body", 1.0) >= MIN_BODY and s.get("gaps", 0.0) <= MAX_GAPS)]
+    def clean(s: dict) -> bool:
+        max_gaps = MAX_GAPS_STOCKS if "price" in s else MAX_GAPS  # alleen stocks hebben 'price'
+        return s.get("body", 1.0) >= MIN_BODY and s.get("gaps", 0.0) <= max_gaps
+
+    messy = [s for s in signals if not clean(s)]
     signals = [s for s in signals if s not in messy]
     if messy:
         log(f"{len(messy)} signalen weggefilterd door rommelige chart: "
