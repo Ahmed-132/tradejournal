@@ -242,11 +242,24 @@ def find_signal(df: pd.DataFrame, length: int) -> dict | None:
         top_i = b + int(h[b:k].argmax())
         if l[k] <= l[ll_i] or h[top_i] < h[lh] * (1 + MIN_HH_PCT / 100):
             continue
-        signal = {"bar": k + length, "hl_i": k, "hh": h[top_i], "prev_h": h[lh], "hl": l[k],
-                  "prev_l": l[ll_i],
-                  "pts": {"LH": (lh, h[lh]), "LL": (ll_i, l[ll_i]), "H": (top_i, h[top_i]),
-                          "HL": (k, l[k])},
-                  "break_i": b}
+        pts = {"LH": (lh, h[lh]), "LL": (ll_i, l[ll_i]), "H": (top_i, h[top_i]), "HL": (k, l[k])}
+        cand = {"kind": "omkeer", "bar": k + length, "hl_i": k, "hh": h[top_i], "prev_h": h[lh],
+                "hl": l[k], "prev_l": l[ll_i], "pts": pts, "break_i": b}
+        if signal is None or cand["bar"] >= signal["bar"]:
+            signal = cand
+        # Tweede HL: eerstvolgende top na de HL moet een HH zijn (boven H), en de eerste
+        # bodem daarna een tweede HL (boven de eerste HL), zonder dat de eerste HL brak.
+        hh_i = next((t for t in tops if t > k), None)
+        if hh_i is None or h[hh_i] < h[top_i] * (1 + MIN_HH_PCT / 100):
+            continue
+        hl2 = next((x for x in bottoms if x > hh_i), None)
+        if hl2 is None or l[hl2] <= l[k] or l[k + 1:hl2].min() < l[k]:
+            continue
+        cand2 = {"kind": "2e HL", "bar": hl2 + length, "hl_i": hl2, "hh": h[hh_i], "prev_h": h[top_i],
+                 "hl": l[hl2], "prev_l": l[k],
+                 "pts": {**pts, "HH": (hh_i, h[hh_i]), "HL2": (hl2, l[hl2])}, "break_i": b}
+        if cand2["bar"] >= signal["bar"]:
+            signal = cand2
 
     if not signal:
         return None
@@ -801,10 +814,15 @@ def format_signal(s: dict) -> str:
     chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval={TV_INTERVAL[s['tf']]}"
     ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
     above = (s["close"] / s["hl"] - 1) * 100
-    return (f"🔔 <code>{ticker}</code> trendomkeer op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
-            f"LH {fmt(s['prev_h'])} gebroken · nieuwe top {fmt(s['hh'])}\n"
-            f"HL {fmt(s['hl'])} (LL was {fmt(s['prev_l'])})\n"
-            f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. HL) · <a href=\"{chart}\">Chart</a>")
+    if s.get("kind") == "2e HL":
+        body = (f"🔔🔔 <code>{ticker}</code> 2e HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
+                f"HH {fmt(s['hh'])} (boven {fmt(s['prev_h'])}) · 2e HL {fmt(s['hl'])} "
+                f"(1e HL {fmt(s['prev_l'])})\n")
+    else:
+        body = (f"🔔 <code>{ticker}</code> trendomkeer op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
+                f"LH {fmt(s['prev_h'])} gebroken · nieuwe top {fmt(s['hh'])}\n"
+                f"HL {fmt(s['hl'])} (LL was {fmt(s['prev_l'])})\n")
+    return body + f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. HL) · <a href=\"{chart}\">Chart</a>"
 
 
 def render_chart(s: dict) -> bytes:
@@ -829,14 +847,14 @@ def render_chart(s: dict) -> bytes:
                                    color=col))
     px = {k: v[0] - start for k, v in pts.items()}
     py = {k: v[1] for k, v in pts.items()}
-    order = ["LH", "LL", "H", "HL"]
+    order = [k for k in ("LH", "LL", "H", "HL", "HH", "HL2") if k in pts]
     # Horizontale lijn op de LH tot aan de break
     ax.hlines(py["LH"], px["LH"], s["break_i"] - start, color="#2962ff", linewidth=1.2)
     ax.annotate("break", (s["break_i"] - start, py["LH"]), xytext=(4, -12),
                 textcoords="offset points", color="#2962ff", fontsize=8)
     ax.plot([px[k] for k in order], [py[k] for k in order], color="#f0b90b", linewidth=1.6, zorder=3)
     for k in order:
-        is_top = k in ("LH", "H")
+        is_top = k in ("LH", "H", "HH")
         ax.annotate(k, (px[k], py[k]),
                     xytext=(0, 10 if is_top else -16), textcoords="offset points", ha="center",
                     color="#f0b90b", fontsize=9, fontweight="bold", zorder=4)
@@ -852,7 +870,8 @@ def render_chart(s: dict) -> bytes:
     for sp in ax.spines.values():
         sp.set_color(grid)
     name = s["tv"].split(":")[-1]
-    ax.set_title(f"{name} · {s['tf']} · trendomkeer (LH gebroken + HL)",
+    ax.set_title(f"{name} · {s['tf']} · " + ("2e HL na de eerste HH" if s.get("kind") == "2e HL"
+                 else "trendomkeer (LH gebroken + HL)"),
                  color=text, fontsize=12, loc="left")
     fig.tight_layout()
     buf = io.BytesIO()
@@ -1037,7 +1056,7 @@ def main() -> int:
     # Dubbele meldingen voorkomen
     new = []
     for s in signals:
-        key = f"{s['name']}|{s['tf']}"
+        key = f"{s['name']}|{s['tf']}|{s.get('kind', '')}"
         stamp = pd.Timestamp(s["time"]).isoformat()
         if state["alerts"].get(key, "") < stamp:
             state["alerts"][key] = stamp
