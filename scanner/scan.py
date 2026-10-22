@@ -352,10 +352,12 @@ def yahoo_download(tickers: list[str], period: str, interval: str) -> dict[str, 
         chunk = tickers[start:start + 200]
         for attempt in range(3):
             try:
-                data = yf.download(
-                    chunk, period=period, interval=interval, group_by="ticker",
-                    auto_adjust=False, prepost=False, threads=True, progress=False,
-                )
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    data = yf.download(
+                        chunk, period=period, interval=interval, group_by="ticker",
+                        auto_adjust=False, prepost=False, threads=True, progress=False,
+                    )
                 break
             except Exception as e:  # rate limit of netwerkfout
                 log(f"  yahoo fout ({e}), opnieuw proberen")
