@@ -10,7 +10,7 @@ on:
         required: false
         default: ""
       snapshot:
-        description: "Momentopname met chart-foto's: 1 = alles, 2 = alleen 2e HL."
+        description: "Momentopname met chart-foto's: 1 = alles, omkeer of retest."
         required: false
         default: ""
       quality_report:

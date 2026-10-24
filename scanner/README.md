@@ -1,6 +1,6 @@
 # HH + HL trend scanner
 
-Scant elk half uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle crypto USDT-paren op Binance** en **goud** (COMEX GC1!) op de timeframes die jij kiest (standaard **4h**), en stuurt een Telegram-melding (met chart-foto) bij een **trendomkeer**: de prijs breekt boven de laatste Lower High (LH) en maakt daarna een eerste Higher Low (HL). Een tweede melding (🔔🔔) volgt bij de 2e HL na de eerste Higher High. Daarnaast een retest-melding (🔁): de prijs breekt boven een vorige top, sluit daarna weer onder die lijn (retest) en sluit dan opnieuw erboven.
+Scant elk half uur **alle US stocks** (prijs > $5, gem. volume > 500k), **alle crypto USDT-paren op Binance** en **goud** (COMEX GC1!) op de timeframes die jij kiest (standaard **4h**), en stuurt een Telegram-melding (met chart-foto) bij een **break + retest**: de prijs sluit boven een vorige top, sluit daarna weer onder die lijn en dan opnieuw erboven. Was die top een Lower High (dalende trend), dan is het een 🔔 trendomkeer; anders een 🔁 retest.
 
 ## Minimum volume
 

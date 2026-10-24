@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import io
 import json
-import math
 import os
 import re
 import sys
@@ -191,96 +190,16 @@ def chart_quality(df: pd.DataFrame, bars: int = QUALITY_BARS) -> tuple[float, fl
     return body, gaps
 
 
-def find_signal(df: pd.DataFrame, length: int) -> dict | None:
-    r"""Trendomkeer: de prijs breekt boven de laatste Lower High en maakt daarna een Higher Low.
-
-        H0                                  
-          \    LH                 H  (nieuwe top na de break)
-           \  /  \    break -->  /\
-            \/    \  ---------- /  \
-            L0     \          /    HL   <- melding als deze bodem bevestigd is
-                    \        /
-                     LL ----
-
-    - LH  = laatste top vóór de break, lager dan de top ervoor (dus een dalende trend).
-    - Break = eerste candle die boven de LH SLUIT.
-    - LL  = laagste punt tussen LH en de break.
-    - HL  = eerste bevestigde bodem na de break, hoger dan LL.
-    - De nieuwe top na de break moet minstens MIN_HH_PCT % boven de LH liggen.
-    Melding op de candle waarop de HL bevestigd wordt (`length` candles na de bodem),
-    zolang de prijs nog niet onder de HL is gezakt.
-    """
-    n = len(df)
-    if n < 6 * length + 4:
-        return None
-    h = df["high"].to_numpy(float)
-    l = df["low"].to_numpy(float)
-    c = df["close"].to_numpy(float)
-
-    def is_top(i: int) -> bool:
-        return h[i] > h[i - length:i].max() and h[i] >= h[i + 1:i + length + 1].max()
-
-    def is_bottom(i: int) -> bool:
-        return l[i] < l[i - length:i].min() and l[i] <= l[i + 1:i + length + 1].min()
-
-    tops = [i for i in range(length, n - length) if is_top(i)]
-    bottoms = [i for i in range(length, n - length) if is_bottom(i)]
-    signal = None
-    for k in bottoms:  # kandidaat-HL
-        # Laatste top vóór k die vóór k gebroken werd (slot erboven) = de LH.
-        prior = [a for a in tops if a < k]
-        lh = next((a for a in reversed(prior) if c[a + 1:k].max(initial=-math.inf) > h[a]), None)
-        if lh is None:
-            continue
-        idx = prior.index(lh)
-        if idx == 0 or h[lh] >= h[prior[idx - 1]]:
-            continue  # geen Lower High: de trend was niet dalend
-        b = lh + 1 + int((c[lh + 1:k] > h[lh]).argmax())  # eerste slot boven de LH
-        if any(b < x < k for x in bottoms):
-            continue  # k is niet de eerste bodem na de break
-        ll_i = lh + 1 + int(l[lh + 1:b + 1].argmin())
-        top_i = b + int(h[b:k].argmax())
-        if l[k] <= l[ll_i] or h[top_i] < h[lh] * (1 + MIN_HH_PCT / 100):
-            continue
-        pts = {"LH": (lh, h[lh]), "LL": (ll_i, l[ll_i]), "H": (top_i, h[top_i]), "HL": (k, l[k])}
-        cand = {"kind": "omkeer", "bar": k + length, "hl_i": k, "hh": h[top_i], "prev_h": h[lh],
-                "hl": l[k], "prev_l": l[ll_i], "pts": pts, "break_i": b}
-        if signal is None or cand["bar"] >= signal["bar"]:
-            signal = cand
-        # Tweede HL: eerstvolgende top na de HL moet een HH zijn (boven H), en de eerste
-        # bodem daarna een tweede HL (boven de eerste HL), zonder dat de eerste HL brak.
-        hh_i = next((t for t in tops if t > k), None)
-        if hh_i is None or h[hh_i] < h[top_i] * (1 + MIN_HH_PCT / 100):
-            continue
-        hl2 = next((x for x in bottoms if x > hh_i), None)
-        if hl2 is None or l[hl2] <= l[k] or l[k + 1:hl2].min() < l[k]:
-            continue
-        cand2 = {"kind": "2e HL", "bar": hl2 + length, "hl_i": hl2, "hh": h[hh_i], "prev_h": h[top_i],
-                 "hl": l[hl2], "prev_l": l[k],
-                 "pts": {**pts, "HH": (hh_i, h[hh_i]), "HL2": (hl2, l[hl2])}, "break_i": b}
-        if cand2["bar"] >= signal["bar"]:
-            signal = cand2
-
-    if not signal:
-        return None
-    # HL al gebroken of te oud? Geen melding.
-    if l[signal["hl_i"] + 1:].min() < signal["hl"]:
-        return None
-    if signal["bar"] >= n - SIGNAL_MAX_AGE:
-        signal["time"] = df.index[signal["bar"]]
-        signal["close"] = float(c[-1])
-        signal["chart"] = df  # voor de afbeelding
-        return signal
-    return None
-
-
 RETEST_MAX_BARS = 20  # retest + terug boven de lijn moet binnen zoveel candles na de break
 
 
 def find_retest(df: pd.DataFrame, length: int) -> dict | None:
-    """Break + retest: de prijs sluit boven een vorige top (nieuwe high), zakt daarna met een
-    slot ONDER die gebroken top (retest) en sluit daarna weer BOVEN de lijn -> melding.
-    De retest mag niet onder de laatste bodem vóór de break zakken (anders is de structuur kapot)."""
+    """Break + retest: de prijs sluit boven een vorige top, zakt daarna met een slot ONDER die
+    gebroken top (retest) en sluit daarna weer BOVEN de lijn -> melding.
+    - Was de gebroken top een Lower High (lager dan de top ervoor)? Dan is het een
+      trendomkeer (🔔). Anders een retest in een bestaande uptrend (🔁).
+    - De retest mag niet onder de laatste bodem vóór de break zakken (anders is de structuur kapot).
+    - Sluit de prijs na het terugkomen weer onder de lijn, dan geen melding."""
     n = len(df)
     if n < 4 * length + 4:
         return None
@@ -308,9 +227,12 @@ def find_retest(df: pd.DataFrame, length: int) -> dict | None:
             continue                                    # te diep: structuur gebroken
         if (c[rc + 1:] < level).any():
             continue                                    # daarna weer onder de lijn gesloten
-        cand = {"kind": "retest", "bar": rc, "hl_i": dip_i, "level": level,
+        prev_tops = [x for x in tops if x < t]
+        kind = "omkeer" if prev_tops and h[t] < h[prev_tops[-1]] else "retest"
+        cand = {"kind": kind, "bar": rc, "hl_i": dip_i, "level": level,
                 "hh": float(h[b:r + 1].max()), "prev_h": level, "hl": l[dip_i], "prev_l": base,
-                "pts": {"top": (t, level), "break": (b, c[b]), "retest": (dip_i, l[dip_i]),
+                "pts": {("LH" if kind == "omkeer" else "top"): (t, level), "break": (b, c[b]),
+                        "retest": (dip_i, l[dip_i]),
                         "terug": (rc, c[rc])}}
         if signal is None or cand["bar"] >= signal["bar"]:
             signal = cand
@@ -323,10 +245,10 @@ def find_retest(df: pd.DataFrame, length: int) -> dict | None:
 
 
 def find_signals(df: pd.DataFrame | None, length: int) -> list[dict]:
-    """Alle soorten signalen voor één chart: trendomkeer / 2e HL, en break + retest."""
+    """Signalen voor één chart: trendomkeer (LH) of retest (vorige high), beide via break + retest."""
     if df is None:
         return []
-    return [s for s in (find_signal(df, length), find_retest(df, length)) if s]
+    return [s for s in (find_retest(df, length),) if s]
 
 
 # ----------------------------------------------------------------------- crypto
@@ -867,21 +789,14 @@ def fmt_vol(x: float) -> str:
 def format_signal(s: dict) -> str:
     chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval={TV_INTERVAL[s['tf']]}"
     ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
-    above = (s["close"] / s["hl"] - 1) * 100
-    if s.get("kind") == "retest":
-        above = (s["close"] / s["level"] - 1) * 100
-        return (f"🔁 <code>{ticker}</code> retest op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
-                f"High {fmt(s['level'])} gebroken · retest tot {fmt(s['hl'])} · terug boven de lijn\n"
-                f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. de lijn) · <a href=\"{chart}\">Chart</a>")
-    if s.get("kind") == "2e HL":
-        body = (f"🔔🔔 <code>{ticker}</code> 2e HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
-                f"HH {fmt(s['hh'])} (boven {fmt(s['prev_h'])}) · 2e HL {fmt(s['hl'])} "
-                f"(1e HL {fmt(s['prev_l'])})\n")
+    above = (s["close"] / s["level"] - 1) * 100
+    if s.get("kind") == "omkeer":
+        head, what = f"🔔 <code>{ticker}</code> trendomkeer op <b>{s['tf']}</b>", "LH"
     else:
-        body = (f"🔔 <code>{ticker}</code> trendomkeer op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
-                f"LH {fmt(s['prev_h'])} gebroken · nieuwe top {fmt(s['hh'])}\n"
-                f"HL {fmt(s['hl'])} (LL was {fmt(s['prev_l'])})\n")
-    return body + f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. HL) · <a href=\"{chart}\">Chart</a>"
+        head, what = f"🔁 <code>{ticker}</code> retest op <b>{s['tf']}</b>", "High"
+    return (f"{head} · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
+            f"{what} {fmt(s['level'])} gebroken · retest tot {fmt(s['hl'])} · terug boven de lijn\n"
+            f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. de lijn) · <a href=\"{chart}\">Chart</a>")
 
 
 def render_chart(s: dict) -> bytes:
@@ -906,11 +821,13 @@ def render_chart(s: dict) -> bytes:
                                    color=col))
     px = {k: v[0] - start for k, v in pts.items()}
     py = {k: v[1] for k, v in pts.items()}
-    retest = s.get("kind") == "retest"
+    retest = "break" in pts and "retest" in pts
     if retest:
-        order = ["top", "break", "retest", "terug"]
-        ax.hlines(s["level"], px["top"], len(d) - 1, color="#2962ff", linewidth=1.4)
-        ax.annotate("gebroken high", (len(d) - 1, s["level"]), xytext=(0, 6), ha="right",
+        first = "LH" if "LH" in pts else "top"
+        order = [first, "break", "retest", "terug"]
+        ax.hlines(s["level"], px[first], len(d) - 1, color="#2962ff", linewidth=1.4)
+        ax.annotate("gebroken LH" if first == "LH" else "gebroken high", (px[first], s["level"]),
+                    xytext=(14, -13), ha="left",
                     textcoords="offset points", color="#2962ff", fontsize=8)
     else:
         order = [k for k in ("LH", "LL", "H", "HL", "HH", "HL2") if k in pts]
@@ -937,8 +854,8 @@ def render_chart(s: dict) -> bytes:
     for sp in ax.spines.values():
         sp.set_color(grid)
     name = s["tv"].split(":")[-1]
-    title = {"2e HL": "2e HL na de eerste HH", "retest": "break + retest, terug boven de lijn"}.get(
-        s.get("kind"), "trendomkeer (LH gebroken + HL)")
+    title = {"omkeer": "trendomkeer: LH gebroken, retest, terug erboven",
+             "retest": "nieuwe high, retest, terug erboven"}.get(s.get("kind"), "")
     ax.set_title(f"{name} · {s['tf']} · {title}",
                  color=text, fontsize=12, loc="left")
     fig.tight_layout()
@@ -1033,9 +950,9 @@ def snapshot(only_kind: str | None = None) -> int:
         state["alerts"][key] = max(state["alerts"].get(key, ""), pd.Timestamp(s["time"]).isoformat())
     STATE_FILE.write_text(json.dumps(state, indent=0, sort_keys=True))
     tfs = ", ".join(PIVOT_LEN)
-    what = "een 2e HL" if only_kind == "2e HL" else "een verse trendomkeer of 2e HL"
+    what = {"omkeer": "een trendomkeer", "retest": "een retest"}.get(only_kind, "een trendomkeer of retest")
     head = (f"📸 <b>Momentopname</b> ({tfs}): {len(signals)} tickers met {what} "
-            f"(laatste {SIGNAL_MAX_AGE} candles, HL nog niet gebroken). Foto's van de {min(len(signals), SNAPSHOT_PHOTOS)} "
+            f"(laatste {SIGNAL_MAX_AGE} candles, nog boven de lijn). Foto's van de {min(len(signals), SNAPSHOT_PHOTOS)} "
             f"met het hoogste volume:")
     send_telegram([head])
     send_alerts(signals[:SNAPSHOT_PHOTOS])
@@ -1060,8 +977,8 @@ def main() -> int:
     snap = os.environ.get("SNAPSHOT", "").strip().lower()
     if snap in ("1", "true", "ja", "yes", "alles"):
         return snapshot()
-    if snap in ("2", "2e", "2e hl", "hl2"):
-        return snapshot("2e HL")
+    if snap in ("omkeer", "retest"):
+        return snapshot(snap)
     if os.environ.get("QUALITY_REPORT", "").strip() in ("1", "true", "ja", "yes"):
         report = quality_report(load_state())
         for r in report:
