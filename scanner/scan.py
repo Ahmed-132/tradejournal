@@ -274,6 +274,61 @@ def find_signal(df: pd.DataFrame, length: int) -> dict | None:
     return None
 
 
+RETEST_MAX_BARS = 20  # retest + terug boven de lijn moet binnen zoveel candles na de break
+
+
+def find_retest(df: pd.DataFrame, length: int) -> dict | None:
+    """Break + retest: de prijs sluit boven een vorige top (nieuwe high), zakt daarna met een
+    slot ONDER die gebroken top (retest) en sluit daarna weer BOVEN de lijn -> melding.
+    De retest mag niet onder de laatste bodem vóór de break zakken (anders is de structuur kapot)."""
+    n = len(df)
+    if n < 4 * length + 4:
+        return None
+    h = df["high"].to_numpy(float)
+    l = df["low"].to_numpy(float)
+    c = df["close"].to_numpy(float)
+    tops = [i for i in range(length, n - length)
+            if h[i] > h[i - length:i].max() and h[i] >= h[i + 1:i + length + 1].max()]
+    signal = None
+    for t in tops:
+        level = h[t]
+        above = [i for i in range(t + 1, n) if c[i] > level]
+        if not above:
+            continue
+        b = above[0]                                    # break: eerste slot boven de top
+        r = next((i for i in range(b + 1, n) if c[i] < level), None)   # retest: slot eronder
+        if r is None:
+            continue
+        rc = next((i for i in range(r + 1, n) if c[i] > level), None)  # terug erboven
+        if rc is None or rc - b > RETEST_MAX_BARS:
+            continue
+        base = l[t + 1:b].min() if b > t + 1 else l[t]
+        dip_i = r + int(l[r:rc + 1].argmin())
+        if l[dip_i] <= base:
+            continue                                    # te diep: structuur gebroken
+        if (c[rc + 1:] < level).any():
+            continue                                    # daarna weer onder de lijn gesloten
+        cand = {"kind": "retest", "bar": rc, "hl_i": dip_i, "level": level,
+                "hh": float(h[b:r + 1].max()), "prev_h": level, "hl": l[dip_i], "prev_l": base,
+                "pts": {"top": (t, level), "break": (b, c[b]), "retest": (dip_i, l[dip_i]),
+                        "terug": (rc, c[rc])}}
+        if signal is None or cand["bar"] >= signal["bar"]:
+            signal = cand
+    if signal and signal["bar"] >= n - SIGNAL_MAX_AGE:
+        signal["time"] = df.index[signal["bar"]]
+        signal["close"] = float(c[-1])
+        signal["chart"] = df
+        return signal
+    return None
+
+
+def find_signals(df: pd.DataFrame | None, length: int) -> list[dict]:
+    """Alle soorten signalen voor één chart: trendomkeer / 2e HL, en break + retest."""
+    if df is None:
+        return []
+    return [s for s in (find_signal(df, length), find_retest(df, length)) if s]
+
+
 # ----------------------------------------------------------------------- crypto
 
 
@@ -332,13 +387,13 @@ def scan_crypto() -> list[dict]:
     def work(job):
         sym, tf = job
         df = daily[sym] if tf == "1d" else binance_klines(sym, tf, now_ms)
-        sig = find_signal(df, PIVOT_LEN[tf]) if df is not None else None
-        if sig:
+        sigs = find_signals(df, PIVOT_LEN[tf])
+        for sig in sigs:
             sig.update(name=sym, tf=tf, tv=f"BINANCE:{sym}", vol=volumes.get(sym, 0.0))
-        return sig
+        return sigs
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        return [s for s in pool.map(work, jobs) if s]
+        return [s for sigs in pool.map(work, jobs) for s in sigs]
 
 
 # ------------------------------------------------------------------ yahoo data
@@ -751,8 +806,7 @@ def scan_stocks_daily(state: dict, now: datetime) -> list[dict]:
         if "1w" in PIVOT_LEN:
             sets.append(("1w", weekly(df, 16, now)))
         for tf, data in sets:
-            sig = find_signal(data, PIVOT_LEN[tf])
-            if sig:
+            for sig in find_signals(data, PIVOT_LEN[tf]):
                 sig.update(tf=tf, **info)
                 signals.append(sig)
     return signals
@@ -766,8 +820,7 @@ def scan_stocks_intraday(state: dict, now: datetime) -> list[dict]:
     for t, df in frames.items():
         h1 = stock_1h(df, now)
         for tf, hours in INTRADAY_HOURS.items():
-            sig = find_signal(stock_hours(h1, hours, now), PIVOT_LEN[tf])
-            if sig:
+            for sig in find_signals(stock_hours(h1, hours, now), PIVOT_LEN[tf]):
                 sig.update(tf=tf, **universe[t])
                 signals.append(sig)
     return signals
@@ -789,8 +842,7 @@ def scan_gold(now: datetime) -> list[dict]:
             sets.append(("1w", weekly(d, 17, now)))
         vol = float((d["close"] * d["volume"] * 100).tail(20).median())  # 100 oz per contract
     for tf, data in sets:
-        sig = find_signal(data, PIVOT_LEN[tf])
-        if sig:
+        for sig in find_signals(data, PIVOT_LEN[tf]):
             sig.update(tf=tf, name=GOLD["name"], tv=GOLD["tv"], vol=vol)
             signals.append(sig)
     return signals
@@ -816,6 +868,11 @@ def format_signal(s: dict) -> str:
     chart = f"https://www.tradingview.com/chart/?symbol={s['tv']}&interval={TV_INTERVAL[s['tf']]}"
     ticker = s["tv"].split(":")[-1]  # zoals je hem in TradingView intypt
     above = (s["close"] / s["hl"] - 1) * 100
+    if s.get("kind") == "retest":
+        above = (s["close"] / s["level"] - 1) * 100
+        return (f"🔁 <code>{ticker}</code> retest op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
+                f"High {fmt(s['level'])} gebroken · retest tot {fmt(s['hl'])} · terug boven de lijn\n"
+                f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. de lijn) · <a href=\"{chart}\">Chart</a>")
     if s.get("kind") == "2e HL":
         body = (f"🔔🔔 <code>{ticker}</code> 2e HL op <b>{s['tf']}</b> · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
                 f"HH {fmt(s['hh'])} (boven {fmt(s['prev_h'])}) · 2e HL {fmt(s['hl'])} "
@@ -834,7 +891,7 @@ def render_chart(s: dict) -> bytes:
     import matplotlib.pyplot as plt
 
     df, pts = s["chart"], s["pts"]
-    start = max(0, min(pts["LH"][0] - 15, len(df) - 70))
+    start = max(0, min(min(v[0] for v in pts.values()) - 15, len(df) - 70))
     d = df.iloc[start:]
     x = range(len(d))
     bg, up, down, grid, text = "#131722", "#26a69a", "#ef5350", "#2a2e39", "#d1d4dc"
@@ -849,19 +906,27 @@ def render_chart(s: dict) -> bytes:
                                    color=col))
     px = {k: v[0] - start for k, v in pts.items()}
     py = {k: v[1] for k, v in pts.items()}
-    order = [k for k in ("LH", "LL", "H", "HL", "HH", "HL2") if k in pts]
-    # Horizontale lijn op de LH tot aan de break
-    ax.hlines(py["LH"], px["LH"], s["break_i"] - start, color="#2962ff", linewidth=1.2)
-    ax.annotate("break", (s["break_i"] - start, py["LH"]), xytext=(4, -12),
-                textcoords="offset points", color="#2962ff", fontsize=8)
-    ax.plot([px[k] for k in order], [py[k] for k in order], color="#f0b90b", linewidth=1.6, zorder=3)
+    retest = s.get("kind") == "retest"
+    if retest:
+        order = ["top", "break", "retest", "terug"]
+        ax.hlines(s["level"], px["top"], len(d) - 1, color="#2962ff", linewidth=1.4)
+        ax.annotate("gebroken high", (len(d) - 1, s["level"]), xytext=(0, 6), ha="right",
+                    textcoords="offset points", color="#2962ff", fontsize=8)
+    else:
+        order = [k for k in ("LH", "LL", "H", "HL", "HH", "HL2") if k in pts]
+        # Horizontale lijn op de LH tot aan de break
+        ax.hlines(py["LH"], px["LH"], s["break_i"] - start, color="#2962ff", linewidth=1.2)
+        ax.annotate("break", (s["break_i"] - start, py["LH"]), xytext=(4, -12),
+                    textcoords="offset points", color="#2962ff", fontsize=8)
+        ax.plot([px[k] for k in order], [py[k] for k in order], color="#f0b90b", linewidth=1.6, zorder=3)
     for k in order:
-        is_top = k in ("LH", "H", "HH")
+        is_top = k in ("LH", "H", "HH", "top", "break", "terug")
         ax.annotate(k, (px[k], py[k]),
                     xytext=(0, 10 if is_top else -16), textcoords="offset points", ha="center",
                     color="#f0b90b", fontsize=9, fontweight="bold", zorder=4)
         ax.scatter([px[k]], [py[k]], color="#f0b90b", s=18, zorder=4)
-    ax.axhline(s["hl"], color="#f0b90b", linestyle=":", linewidth=1)
+    if not retest:
+        ax.axhline(s["hl"], color="#f0b90b", linestyle=":", linewidth=1)
     ax.set_xlim(-1, len(d) + 1)
     ticks = list(range(0, len(d), max(1, len(d) // 6)))
     ax.set_xticks(ticks)
@@ -872,8 +937,9 @@ def render_chart(s: dict) -> bytes:
     for sp in ax.spines.values():
         sp.set_color(grid)
     name = s["tv"].split(":")[-1]
-    ax.set_title(f"{name} · {s['tf']} · " + ("2e HL na de eerste HH" if s.get("kind") == "2e HL"
-                 else "trendomkeer (LH gebroken + HL)"),
+    title = {"2e HL": "2e HL na de eerste HH", "retest": "break + retest, terug boven de lijn"}.get(
+        s.get("kind"), "trendomkeer (LH gebroken + HL)")
+    ax.set_title(f"{name} · {s['tf']} · {title}",
                  color=text, fontsize=12, loc="left")
     fig.tight_layout()
     buf = io.BytesIO()
