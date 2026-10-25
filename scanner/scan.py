@@ -923,7 +923,7 @@ def send_telegram(messages: list[str]) -> None:
     chunk = ""
     batches = []
     for m in messages:
-        if len(chunk) + len(m) + 2 > 4000:
+        if chunk and len(chunk) + len(m) + 2 > 4000:
             batches.append(chunk)
             chunk = ""
         chunk += m + "\n\n"
@@ -980,7 +980,9 @@ def snapshot(only_kind: str | None = None) -> int:
     send_alerts(signals[:SNAPSHOT_PHOTOS])
     rest = signals[SNAPSHOT_PHOTOS:]
     if rest:
-        send_telegram(["Ook nog: " + ", ".join(f"<code>{s['tv'].split(':')[-1]}</code>" for s in rest)])
+        names = [f"<code>{s['tv'].split(':')[-1]}</code>" for s in rest]
+        send_telegram([("Ook nog: " if i == 0 else "") + ", ".join(names[i:i + 120])
+                       for i in range(0, len(names), 120)])
     return 0
 
 
