@@ -201,6 +201,8 @@ RETEST_MAX_BARS = 20  # retest + terug boven de lijn moet binnen zoveel candles 
 def find_retest(df: pd.DataFrame, length: int) -> dict | None:
     """Break + retest: de prijs sluit boven een vorige top, zakt daarna met een slot ONDER die
     gebroken top (retest) en sluit daarna weer BOVEN de lijn -> melding.
+    Ook goed: een GROENE candle met een wick onder de lijn die boven de lijn sluit (wick-retest).
+    Een rode wick-candle telt niet.
     - Was de gebroken top een Lower High (lager dan de top ervoor)? Dan is het een
       trendomkeer (🔔). Anders een retest in een bestaande uptrend (🔁).
     - De retest mag niet onder de laatste bodem vóór de break zakken (anders is de structuur kapot).
@@ -208,6 +210,7 @@ def find_retest(df: pd.DataFrame, length: int) -> dict | None:
     n = len(df)
     if n < 4 * length + 4:
         return None
+    o = df["open"].to_numpy(float)
     h = df["high"].to_numpy(float)
     l = df["low"].to_numpy(float)
     c = df["close"].to_numpy(float)
@@ -220,10 +223,20 @@ def find_retest(df: pd.DataFrame, length: int) -> dict | None:
         if not above:
             continue
         b = above[0]                                    # break: eerste slot boven de top
-        r = next((i for i in range(b + 1, n) if c[i] < level), None)   # retest: slot eronder
-        if r is None:
-            continue
-        rc = next((i for i in range(r + 1, n) if c[i] > level), None)  # terug erboven
+        # Retest: (a) een slot onder de lijn en daarna een slot erboven, of
+        # (b) een groene candle met een wick onder de lijn die boven de lijn sluit.
+        r = rc = None
+        wick = False
+        for i in range(b + 1, n):
+            if r is None and l[i] < level < c[i] and c[i] > o[i]:
+                r = rc = i
+                wick = True
+                break
+            if r is None and c[i] < level:
+                r = i
+            elif r is not None and c[i] > level:
+                rc = i
+                break
         if rc is None or rc - b > RETEST_MAX_BARS:
             continue
         base = l[t + 1:b].min() if b > t + 1 else l[t]
@@ -234,7 +247,7 @@ def find_retest(df: pd.DataFrame, length: int) -> dict | None:
             continue                                    # daarna weer onder de lijn gesloten
         prev_tops = [x for x in tops if x < t]
         kind = "omkeer" if prev_tops and h[t] < h[prev_tops[-1]] else "retest"
-        cand = {"kind": kind, "bar": rc, "hl_i": dip_i, "level": level,
+        cand = {"kind": kind, "bar": rc, "hl_i": dip_i, "wick": wick, "level": level,
                 "hh": float(h[b:r + 1].max()), "prev_h": level, "hl": l[dip_i], "prev_l": base,
                 "pts": {("LH" if kind == "omkeer" else "top"): (t, level), "break": (b, c[b]),
                         "retest": (dip_i, l[dip_i]),
@@ -802,7 +815,9 @@ def format_signal(s: dict) -> str:
     else:
         head, what = f"🔁 <code>{ticker}</code> retest op <b>{s['tf']}</b>", "High"
     return (f"{head} · Vol {fmt_vol(s.get('vol', 0))}/dag\n"
-            f"{what} {fmt(s['level'])} gebroken · retest tot {fmt(s['hl'])} · terug boven de lijn\n"
+            f"{what} {fmt(s['level'])} gebroken · "
+            + (f"groene wick tot {fmt(s['hl'])} · gesloten boven de lijn\n" if s.get("wick")
+               else f"retest tot {fmt(s['hl'])} · terug boven de lijn\n") +
             f"Koers {fmt(s['close'])} ({above:+.1f}% t.o.v. de lijn) · <a href=\"{chart}\">Chart</a>")
 
 
