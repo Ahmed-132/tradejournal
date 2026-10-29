@@ -1,5 +1,6 @@
 [
   {"ticker": "VERA", "market": "stock", "tf": "4H", "entry": 30.88, "sl": 26.69, "tp": 40.93, "posted": "2026-10-29T12:00:00Z"},
-  {"ticker": "SLB",  "market": "stock", "tf": "4H", "entry": 53.09, "sl": 51.76, "tp": 61.06, "posted": "2026-10-29T12:00:00Z"},
-  {"ticker": "SRPT", "market": "stock", "tf": "4H", "entry": 19.03, "sl": 16.95, "tp": 23.59, "posted": "2026-10-29T12:00:00Z"}
+  {"ticker": "SLB", "market": "stock", "tf": "4H", "entry": 53.09, "sl": 51.76, "tp": 61.06, "posted": "2026-10-29T12:00:00Z"},
+  {"ticker": "SRPT", "market": "stock", "tf": "4H", "entry": 19.03, "sl": 16.95, "tp": 23.59, "posted": "2026-10-29T12:00:00Z"},
+  {"ticker": "AVGO", "market": "stock", "tf": "4H", "entry": 345.71, "sl": 326.1, "tp": 379.23, "posted": "2026-10-29T17:43:00Z"}
 ]
