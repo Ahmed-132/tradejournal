@@ -119,6 +119,7 @@ HALAL_EXCLUDED_SIC = [
 ]
 # Bedrijven die de SIC-code niet vangt (bv. alcohol onder 'beverages', defensie).
 HALAL_EXCLUDED_TICKERS = {
+    "SLG": "rente (leningen- en preferred-portefeuille)",
     "STZ": "alcohol", "BF-A": "alcohol", "BF-B": "alcohol", "TAP": "alcohol", "DEO": "alcohol",
     "BUD": "alcohol", "SAM": "alcohol", "MGPI": "alcohol", "ABEV": "alcohol",
     "LMT": "wapens", "NOC": "wapens", "GD": "wapens", "RTX": "wapens", "LHX": "wapens",
@@ -544,6 +545,21 @@ def sec_shares() -> dict[int, float]:
     return out
 
 
+def total_debt(bal: dict[str, float]) -> float:
+    """Alle rentedragende schuld. Bedrijven rapporteren die onder verschillende posten:
+    neem de grootste schatting."""
+    g = lambda k: bal.get(k, 0.0)
+    base = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
+            or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent"))
+    parts = max(g("SecuredDebt") + g("UnsecuredDebt"),
+                g("SecuredLongTermDebt") + g("UnsecuredLongTermDebt"),
+                g("NotesPayable"), g("SeniorNotes"), g("ConvertibleNotesPayable"),
+                g("OtherLongTermDebt")) + g("LineOfCredit") + g("LongTermLineOfCredit")
+    return max(base, g("DebtLongtermAndShorttermCombinedAmount"), parts) \
+        + g("ShortTermBorrowings") + g("CommercialPaper") \
+        + g("SecuritiesSoldUnderAgreementsToRepurchase")
+
+
 def halal_reasons(ticker: str, sic: int | None, bal: dict[str, float] | None,
                   shares: float | None, price: float | None) -> dict[str, str]:
     """Per methode een lege string (= halal) of de reden van uitsluiting."""
@@ -560,16 +576,7 @@ def halal_reasons(ticker: str, sic: int | None, bal: dict[str, float] | None,
     if not bal:
         return both("geen balans (US-GAAP)")
     g = lambda k: bal.get(k, 0.0)
-    base = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
-            or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent"))
-    parts = max(g("SecuredDebt") + g("UnsecuredDebt"),
-                g("SecuredLongTermDebt") + g("UnsecuredLongTermDebt"),
-                g("NotesPayable"), g("SeniorNotes"), g("ConvertibleNotesPayable"),
-                g("OtherLongTermDebt")) + g("LineOfCredit") + g("LongTermLineOfCredit")
-    # Bedrijven rapporteren schuld onder verschillende posten: neem de grootste schatting
-    debt = max(base, g("DebtLongtermAndShorttermCombinedAmount"), parts) \
-        + g("ShortTermBorrowings") + g("CommercialPaper") \
-        + g("SecuritiesSoldUnderAgreementsToRepurchase")
+    debt = total_debt(bal)
     cash = g("CashAndCashEquivalentsAtCarryingValue") + (g("ShortTermInvestments")
                                                          or g("MarketableSecuritiesCurrent"))
 
@@ -604,9 +611,7 @@ def halal_check_report(tickers: list[str]) -> list[str]:
         lines = [f"<b>{t}</b> — {(sub or {}).get('sicDescription', '?')} (SIC {sic})"]
         if bal:
             g = lambda k: bal.get(k, 0.0)
-            debt = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
-                    or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent")) + g("ShortTermBorrowings") \
-        + g("SecuritiesSoldUnderAgreementsToRepurchase")
+            debt = total_debt(bal)
             cash = g("CashAndCashEquivalentsAtCarryingValue") + (g("ShortTermInvestments")
                                                                  or g("MarketableSecuritiesCurrent"))
             mcap = (sh or 0) * (price or 0)
@@ -681,7 +686,7 @@ def apply_halal(state: dict) -> None:
     today = datetime.now(timezone.utc).date()
     fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
     halal = state.get("halal", {})
-    if state.get("halal_ver") != 6:
+    if state.get("halal_ver") != 7:
         fresh, halal = False, {}
     if fresh and all(t in halal for t in liquid):
         state["universe"] = halal_universe(liquid, halal)
@@ -712,7 +717,7 @@ def apply_halal(state: dict) -> None:
         sic = sic_cache.get(str(cik), [None])[0] if cik else None
         halal[t] = halal_reasons(t, sic, balances.get(cik) if cik else None,
                                  shares.get(cik) if cik else None, v.get("price"))
-    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 6
+    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 7
     state["universe"] = halal_universe(liquid, halal)
     for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
         reasons: dict[str, int] = {}
