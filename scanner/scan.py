@@ -502,7 +502,12 @@ def recent_quarters(n: int = 3) -> list[str]:
 BALANCE_TAGS = ["Assets", "LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent",
                 "LongTermDebtAndCapitalLeaseObligations", "ShortTermBorrowings",
                 "CashAndCashEquivalentsAtCarryingValue", "ShortTermInvestments",
-                "MarketableSecuritiesCurrent", "SecuritiesSoldUnderAgreementsToRepurchase"]
+                "MarketableSecuritiesCurrent", "SecuritiesSoldUnderAgreementsToRepurchase",
+                # andere schuldposten (o.a. vastgoedbedrijven/REITs gebruiken deze)
+                "DebtLongtermAndShorttermCombinedAmount", "SecuredDebt", "UnsecuredDebt",
+                "SecuredLongTermDebt", "UnsecuredLongTermDebt", "NotesPayable", "SeniorNotes",
+                "ConvertibleNotesPayable", "OtherLongTermDebt", "LineOfCredit",
+                "LongTermLineOfCredit", "CommercialPaper"]
 
 
 def sec_balances() -> dict[int, dict[str, float]]:
@@ -555,8 +560,15 @@ def halal_reasons(ticker: str, sic: int | None, bal: dict[str, float] | None,
     if not bal:
         return both("geen balans (US-GAAP)")
     g = lambda k: bal.get(k, 0.0)
-    debt = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
-            or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent")) + g("ShortTermBorrowings") \
+    base = (g("LongTermDebt") or g("LongTermDebtAndCapitalLeaseObligations")
+            or g("LongTermDebtNoncurrent") + g("LongTermDebtCurrent"))
+    parts = max(g("SecuredDebt") + g("UnsecuredDebt"),
+                g("SecuredLongTermDebt") + g("UnsecuredLongTermDebt"),
+                g("NotesPayable"), g("SeniorNotes"), g("ConvertibleNotesPayable"),
+                g("OtherLongTermDebt")) + g("LineOfCredit") + g("LongTermLineOfCredit")
+    # Bedrijven rapporteren schuld onder verschillende posten: neem de grootste schatting
+    debt = max(base, g("DebtLongtermAndShorttermCombinedAmount"), parts) \
+        + g("ShortTermBorrowings") + g("CommercialPaper") \
         + g("SecuritiesSoldUnderAgreementsToRepurchase")
     cash = g("CashAndCashEquivalentsAtCarryingValue") + (g("ShortTermInvestments")
                                                          or g("MarketableSecuritiesCurrent"))
@@ -669,7 +681,7 @@ def apply_halal(state: dict) -> None:
     today = datetime.now(timezone.utc).date()
     fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
     halal = state.get("halal", {})
-    if state.get("halal_ver") != 5:
+    if state.get("halal_ver") != 6:
         fresh, halal = False, {}
     if fresh and all(t in halal for t in liquid):
         state["universe"] = halal_universe(liquid, halal)
@@ -700,7 +712,7 @@ def apply_halal(state: dict) -> None:
         sic = sic_cache.get(str(cik), [None])[0] if cik else None
         halal[t] = halal_reasons(t, sic, balances.get(cik) if cik else None,
                                  shares.get(cik) if cik else None, v.get("price"))
-    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 5
+    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 6
     state["universe"] = halal_universe(liquid, halal)
     for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
         reasons: dict[str, int] = {}
