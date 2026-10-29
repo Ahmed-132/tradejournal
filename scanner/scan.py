@@ -938,6 +938,109 @@ def send_telegram(messages: list[str]) -> None:
         time.sleep(1)
 
 
+
+# ------------------------------------------------------------------- trade-tracker
+
+TRADES_FILE = Path(__file__).with_name("trades.json")
+
+
+def pct(a: float, b: float) -> str:
+    v = (b / a - 1) * 100
+    return f"{v:+.1f}%"
+
+
+def trade_bars(t: dict) -> pd.DataFrame | None:
+    """1h-candles sinds de trade gepost werd (naive New York-tijd voor stocks, UTC voor crypto)."""
+    posted = pd.Timestamp(t["posted"])
+    if t.get("market") == "crypto":
+        df = binance_klines(t["ticker"], "1h", int(time.time() * 1000) + 3_600_000)
+        if df is None:
+            return None
+        return df[df.index >= posted]
+    df = yahoo_download([t["ticker"]], "1mo", "60m").get(t["ticker"])
+    if df is None:
+        return None
+    return df[df.index >= posted.tz_convert(ET).tz_localize(None)]
+
+
+def trade_messages(t: dict, status: str) -> str:
+    """Melding voor jou + kant-en-klare tekst om te posten."""
+    tk, e, sl, tp = t["ticker"], t["entry"], t["sl"], t["tp"]
+    rr = (tp - e) / (e - sl)
+    if status == "open":
+        return f"🟢 <b>{tk}</b> entry {fmt(e)} geraakt, de trade loopt nu (SL {fmt(sl)} · TP {fmt(tp)})."
+    if status == "missed":
+        return (f"⏭️ <b>{tk}</b> ging naar TP {fmt(tp)} zonder je entry {fmt(e)} te raken. "
+                f"Trade vervalt, niets te posten.")
+    if status == "void":
+        return (f"⏭️ <b>{tk}</b> raakte de SL {fmt(sl)} zonder je entry {fmt(e)} te raken. "
+                f"Trade vervalt, niets te posten.")
+    if status == "tp":
+        post = (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {fmt(e)} → TP {fmt(tp)}\n"
+                f"R:R 1:{rr:.1f}")
+        tv = f"Update: {tk} reached the take profit at {fmt(tp)} ({pct(e, tp)}). Trade closed ✅"
+        head = f"🎯 <b>{tk} TP geraakt</b> ({pct(e, tp)})"
+    else:
+        post = (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {fmt(e)} → SL {fmt(sl)}\n"
+                f"Losses are part of the game. Risk managed, next setup.")
+        tv = f"Update: {tk} hit the stop loss at {fmt(sl)} ({pct(e, sl)}). Trade closed ❌"
+        head = f"🛑 <b>{tk} SL geraakt</b> ({pct(e, sl)})"
+    return (f"{head}\n\nTelegram (antwoord op je post) + X (quote je post):\n<pre>{post}</pre>\n"
+            f"TradingView (Update op je idea):\n<pre>{tv}</pre>")
+
+
+def check_trades(state: dict) -> list[str]:
+    """Volgt je geposte trades: meldt wanneer entry, TP of SL geraakt wordt."""
+    try:
+        trades = json.loads(TRADES_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    book = state.setdefault("trades", {})
+    out = []
+    for t in trades:
+        tid = f"{t['ticker']}|{t['posted']}"
+        st = book.get(tid, {"status": "pending"})
+        if st["status"] not in ("pending", "open"):
+            continue
+        try:
+            df = trade_bars(t)
+        except Exception as e:
+            log(f"Trade {t['ticker']}: data mislukt ({e})")
+            continue
+        if df is None or df.empty:
+            continue
+        e, sl, tp = t["entry"], t["sl"], t["tp"]
+        above = st.get("above")
+        if above is None:  # lag de koers boven of onder de entry toen je postte?
+            above = bool(df["open"].iloc[0] > e)
+            st["above"] = above
+        for ts, bar in df.iterrows():
+            if str(ts) <= st.get("seen", ""):
+                continue
+            hi, lo = bar["high"], bar["low"]
+            if st["status"] == "pending":
+                if (lo <= e) if above else (hi >= e):
+                    st["status"], st["filled"] = "open", str(ts)
+                    out.append(trade_messages(t, "open"))
+                elif hi >= tp:
+                    st["status"] = "missed"
+                elif lo <= sl:
+                    st["status"] = "void"
+            if st["status"] == "open":
+                if lo <= sl:        # bij twijfel (TP en SL in dezelfde candle) telt de SL
+                    st["status"] = "sl"
+                elif hi >= tp:
+                    st["status"] = "tp"
+            if st["status"] in ("tp", "sl", "missed", "void"):
+                st["closed"] = str(ts)
+                out.append(trade_messages(t, st["status"]))
+                break
+        st["seen"] = str(df.index[-2]) if len(df) > 1 else st.get("seen", "")  # laatste candle loopt nog
+        book[tid] = st
+        log(f"Trade {t['ticker']}: {st['status']}")
+    return out
+
+
 # ------------------------------------------------------------------------ main
 
 
@@ -1088,10 +1191,20 @@ def main() -> int:
     for m in messages:
         log(m.replace("\n", " | "))
 
+    try:
+        trade_msgs = check_trades(state)
+    except Exception as e:
+        log(f"Trade-tracker mislukt: {e}")
+        trade_msgs = []
+
     if dry_run:
+        for m in trade_msgs:
+            log(m.replace("\n", " | "))
         return 0
     if new:
         send_alerts(new)
+    for m in trade_msgs:
+        send_telegram([m])
 
     # Oude meldingen (> 60 dagen) opruimen
     cutoff = (now_utc - timedelta(days=60)).isoformat()
