@@ -1035,7 +1035,7 @@ def send_channel(text: str, reply_to: int | None = None) -> bool:
     return r.ok
 
 
-def check_trades(state: dict) -> list[tuple[str, dict, str]]:
+def check_trades(state: dict) -> list[tuple[str | None, dict, str, str]]:
     """Volgt je geposte trades: meldt wanneer entry, TP of SL geraakt wordt."""
     try:
         trades = json.loads(TRADES_FILE.read_text())
@@ -1047,6 +1047,9 @@ def check_trades(state: dict) -> list[tuple[str, dict, str]]:
         tid = f"{t['ticker']}|{t['posted']}"
         st = book.get(tid, {"status": "pending"})
         if st["status"] not in ("pending", "open"):
+            if st["status"] in ("tp", "sl") and not st.get("public"):
+                out.append((None, t, st["status"], tid))  # resultaat nog niet in het kanaal
+            log(f"Trade {t['ticker']}: {st['status']} (gesloten)")
             continue
         try:
             df = trade_bars(t)
@@ -1067,7 +1070,7 @@ def check_trades(state: dict) -> list[tuple[str, dict, str]]:
             if st["status"] == "pending":
                 if (lo <= e) if above else (hi >= e):
                     st["status"], st["filled"] = "open", str(ts)
-                    out.append((trade_messages(t, "open"), t, "open"))
+                    out.append((trade_messages(t, "open"), t, "open", tid))
                 elif hi >= tp:
                     st["status"] = "missed"
                 elif lo <= sl:
@@ -1079,7 +1082,7 @@ def check_trades(state: dict) -> list[tuple[str, dict, str]]:
                     st["status"] = "tp"
             if st["status"] in ("tp", "sl", "missed", "void"):
                 st["closed"] = str(ts)
-                out.append((trade_messages(t, st["status"]), t, st["status"]))
+                out.append((trade_messages(t, st["status"]), t, st["status"], tid))
                 break
         st["seen"] = str(df.index[-2]) if len(df) > 1 else st.get("seen", "")  # laatste candle loopt nog
         book[tid] = st
@@ -1244,16 +1247,22 @@ def main() -> int:
         trade_msgs = []
 
     if dry_run:
-        for m, _, _ in trade_msgs:
-            log(m.replace("\n", " | "))
+        for m, _, _, _ in trade_msgs:
+            if m:
+                log(m.replace("\n", " | "))
         return 0
     if new:
         send_alerts(new)
-    for m, t, status in trade_msgs:
+    for m, t, status, tid in trade_msgs:
         pub = channel_message(t, status)
-        if pub and send_channel(pub, t.get("tg_msg")):
+        posted = bool(pub) and send_channel(pub, t.get("tg_msg"))
+        if posted:
+            state["trades"][tid]["public"] = True
+            if m is None:  # eerder gesloten, nu alsnog gepost
+                m = trade_messages(t, status)
             m += "\n\n📢 Automatisch gepost in je Telegram-kanaal."
-        send_telegram([m])
+        if m:
+            send_telegram([m])
 
     # Oude meldingen (> 60 dagen) opruimen
     cutoff = (now_utc - timedelta(days=60)).isoformat()
