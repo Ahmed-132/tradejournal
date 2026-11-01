@@ -1006,7 +1006,36 @@ def trade_messages(t: dict, status: str) -> str:
             f"TradingView (Update op je idea):\n<pre>{tv}</pre>")
 
 
-def check_trades(state: dict) -> list[str]:
+TELEGRAM_CHANNEL = (os.environ.get("TELEGRAM_CHANNEL") or "@halaltradingandinvest").strip()
+
+
+def channel_message(t: dict, status: str) -> str | None:
+    """Resultaat zoals het in je openbare kanaal komt (alleen bij TP of SL)."""
+    tk, e, sl, tp = t["ticker"], t["entry"], t["sl"], t["tp"]
+    rr = (tp - e) / (e - sl)
+    if status == "tp":
+        return (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {fmt(e)} → TP {fmt(tp)}\n"
+                f"R:R 1:{rr:.1f}\n\nHalal ✅ · Spot only · No leverage")
+    if status == "sl":
+        return (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {fmt(e)} → SL {fmt(sl)}\n"
+                f"Losses are part of the game. Risk managed, next setup.")
+    return None
+
+
+def send_channel(text: str, reply_to: int | None = None) -> bool:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token or not TELEGRAM_CHANNEL:
+        return False
+    body = {"chat_id": TELEGRAM_CHANNEL, "text": text, "disable_web_page_preview": True}
+    if reply_to:
+        body["reply_parameters"] = {"message_id": int(reply_to), "allow_sending_without_reply": True}
+    r = http.post(f"https://api.telegram.org/bot{token}/sendMessage", timeout=30, json=body)
+    if not r.ok:
+        log(f"Kanaal-post mislukt: {r.status_code} {r.text[:200]}")
+    return r.ok
+
+
+def check_trades(state: dict) -> list[tuple[str, dict, str]]:
     """Volgt je geposte trades: meldt wanneer entry, TP of SL geraakt wordt."""
     try:
         trades = json.loads(TRADES_FILE.read_text())
@@ -1038,7 +1067,7 @@ def check_trades(state: dict) -> list[str]:
             if st["status"] == "pending":
                 if (lo <= e) if above else (hi >= e):
                     st["status"], st["filled"] = "open", str(ts)
-                    out.append(trade_messages(t, "open"))
+                    out.append((trade_messages(t, "open"), t, "open"))
                 elif hi >= tp:
                     st["status"] = "missed"
                 elif lo <= sl:
@@ -1050,7 +1079,7 @@ def check_trades(state: dict) -> list[str]:
                     st["status"] = "tp"
             if st["status"] in ("tp", "sl", "missed", "void"):
                 st["closed"] = str(ts)
-                out.append(trade_messages(t, st["status"]))
+                out.append((trade_messages(t, st["status"]), t, st["status"]))
                 break
         st["seen"] = str(df.index[-2]) if len(df) > 1 else st.get("seen", "")  # laatste candle loopt nog
         book[tid] = st
@@ -1215,12 +1244,15 @@ def main() -> int:
         trade_msgs = []
 
     if dry_run:
-        for m in trade_msgs:
+        for m, _, _ in trade_msgs:
             log(m.replace("\n", " | "))
         return 0
     if new:
         send_alerts(new)
-    for m in trade_msgs:
+    for m, t, status in trade_msgs:
+        pub = channel_message(t, status)
+        if pub and send_channel(pub, t.get("tg_msg")):
+            m += "\n\n📢 Automatisch gepost in je Telegram-kanaal."
         send_telegram([m])
 
     # Oude meldingen (> 60 dagen) opruimen

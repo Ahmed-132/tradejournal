@@ -53,6 +53,7 @@ jobs:
           PYTHONWARNINGS: ignore
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHANNEL: ${{ vars.TELEGRAM_CHANNEL }}
           HALAL_CHECK: ${{ inputs.halal_check }}
           QUALITY_REPORT: ${{ inputs.quality_report }}
           SNAPSHOT: ${{ inputs.snapshot }}
