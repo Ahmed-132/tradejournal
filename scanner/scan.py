@@ -93,11 +93,11 @@ MIN_STOCK_VOLUME = parse_amount(os.environ.get("MIN_VOLUME_STOCKS", ""), 10e6)
 # Halal-filter voor stocks volgens AAOIFI en MSCI Islamic (gegevens: SEC EDGAR).
 # Uitzetten: variabele HALAL=0.
 HALAL_ONLY = os.environ.get("HALAL", "1").strip().lower() not in ("0", "false", "no", "nee", "off")
-# Welke stocks doorlaten (variabele HALAL_METHOD): "any" = minstens één methode (standaard),
-# "both" = beide, "aaoifi" of "msci" = alleen die methode.
-HALAL_METHOD = (os.environ.get("HALAL_METHOD") or "any").strip().lower()
+# Welke stocks doorlaten (variabele HALAL_METHOD): "both" = beide methodes (standaard, geen twijfel),
+# "any" = minstens één methode, "aaoifi" of "msci" = alleen die methode.
+HALAL_METHOD = (os.environ.get("HALAL_METHOD") or "both").strip().lower()
 if HALAL_METHOD not in ("any", "both", "aaoifi", "msci"):
-    HALAL_METHOD = "any"
+    HALAL_METHOD = "both"
 MSCI_MAX_RATIO = 1 / 3           # schulden, cash+beleggingen / totale activa
 AAOIFI_MAX_RATIO = 0.30          # schulden, cash+beleggingen / beurswaarde
 HALAL_REFRESH_DAYS = 7           # balansgegevens opnieuw ophalen
@@ -116,9 +116,24 @@ HALAL_EXCLUDED_SIC = [
     (7800, 7849, "film/entertainment"), (7900, 7900, "amusement/entertainment"),
     (7948, 7948, "gokken (wedrennen)"), (7990, 7990, "amusement/entertainment"),
     (7993, 7993, "gokken (gokautomaten)"), (7999, 7999, "gokken/amusement"),
+    (5810, 5813, "restaurants/bars (alcohol, varkensvlees)"),
+    (5180, 5182, "groothandel bier/wijn/sterke drank"), (5921, 5921, "drankwinkels"),
 ]
 # Bedrijven die de SIC-code niet vangt (bv. alcohol onder 'beverages', defensie).
 HALAL_EXCLUDED_TICKERS = {
+    # cannabis (recreatief)
+    "TLRY": "cannabis",
+    "CGC": "cannabis",
+    "ACB": "cannabis",
+    "CRON": "cannabis",
+    "SNDL": "cannabis",
+    "CURLF": "cannabis",
+    "GTBIF": "cannabis",
+    "TCNNF": "cannabis",
+    "MSOS": "cannabis",
+    "OGI": "cannabis",
+    "HEXO": "cannabis",
+    "GRWG": "cannabis",
     # restaurantketens met bar/alcohol (en varkensvlees) op de kaart: twijfel = liever niet
     "EAT": "alcohol (restaurant met bar)",
     "SHAK": "alcohol (restaurant met bar)",
@@ -701,7 +716,7 @@ def apply_halal(state: dict) -> None:
     today = datetime.now(timezone.utc).date()
     fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
     halal = state.get("halal", {})
-    if state.get("halal_ver") != 8:
+    if state.get("halal_ver") != 9:
         fresh, halal = False, {}
     if fresh and all(t in halal for t in liquid):
         state["universe"] = halal_universe(liquid, halal)
@@ -732,7 +747,7 @@ def apply_halal(state: dict) -> None:
         sic = sic_cache.get(str(cik), [None])[0] if cik else None
         halal[t] = halal_reasons(t, sic, balances.get(cik) if cik else None,
                                  shares.get(cik) if cik else None, v.get("price"))
-    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 8
+    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 9
     state["universe"] = halal_universe(liquid, halal)
     for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
         reasons: dict[str, int] = {}

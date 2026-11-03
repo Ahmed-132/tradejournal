@@ -13,7 +13,7 @@ Je krijgt alleen meldingen voor tickers met minstens **$10M dagvolume** (mediaan
   - Beide: geen verboden kernactiviteit (banken, verzekeraars en andere financiële diensten, alcohol, tabak, varkensvlees, wapens, hotels/casino's, gokken, film/media/entertainment, tv en kabel).
   - **AAOIFI**: schulden < 30% en cash + kortlopende beleggingen < 30% van de **beurswaarde**.
   - **MSCI**: schulden < 33% en cash + kortlopende beleggingen < 33% van de **totale activa**.
-  - Variabele `HALAL_METHOD`: `any` (standaard: minstens één methode), `both` (beide), `aaoifi` of `msci`.
+  - Variabele `HALAL_METHOD`: `both` (standaard: AAOIFI én MSCI, geen twijfelgevallen), `any` (minstens één methode), `aaoifi` of `msci`.
   - Buitenlandse bedrijven zonder US-GAAP-cijfers (bv. ASML, TSM) worden overgeslagen omdat ze niet gecontroleerd kunnen worden.
   - Niet gecontroleerd: het aandeel verboden inkomsten (< 5%).
   - Balanscijfers worden wekelijks vernieuwd, sectorcodes maandelijks.
