@@ -93,11 +93,11 @@ MIN_STOCK_VOLUME = parse_amount(os.environ.get("MIN_VOLUME_STOCKS", ""), 10e6)
 # Halal-filter voor stocks volgens AAOIFI en MSCI Islamic (gegevens: SEC EDGAR).
 # Uitzetten: variabele HALAL=0.
 HALAL_ONLY = os.environ.get("HALAL", "1").strip().lower() not in ("0", "false", "no", "nee", "off")
-# Welke stocks doorlaten (variabele HALAL_METHOD): "both" = beide methodes (standaard, geen twijfel),
-# "any" = minstens één methode, "aaoifi" of "msci" = alleen die methode.
-HALAL_METHOD = (os.environ.get("HALAL_METHOD") or "both").strip().lower()
+# Welke stocks doorlaten (variabele HALAL_METHOD): "any" = goedgekeurd door AAOIFI of MSCI
+# (standaard, beide erkend door geleerden), "both" = beide, "aaoifi" of "msci" = alleen die methode.
+HALAL_METHOD = (os.environ.get("HALAL_METHOD") or "any").strip().lower()
 if HALAL_METHOD not in ("any", "both", "aaoifi", "msci"):
-    HALAL_METHOD = "both"
+    HALAL_METHOD = "any"
 MSCI_MAX_RATIO = 1 / 3           # schulden, cash+beleggingen / totale activa
 AAOIFI_MAX_RATIO = 0.30          # schulden, cash+beleggingen / beurswaarde
 HALAL_REFRESH_DAYS = 7           # balansgegevens opnieuw ophalen
