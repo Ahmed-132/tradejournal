@@ -119,6 +119,21 @@ HALAL_EXCLUDED_SIC = [
 ]
 # Bedrijven die de SIC-code niet vangt (bv. alcohol onder 'beverages', defensie).
 HALAL_EXCLUDED_TICKERS = {
+    # restaurantketens met bar/alcohol (en varkensvlees) op de kaart: twijfel = liever niet
+    "EAT": "alcohol (restaurant met bar)",
+    "SHAK": "alcohol (restaurant met bar)",
+    "DRI": "alcohol (restaurant met bar)",
+    "TXRH": "alcohol (restaurant met bar)",
+    "BLMN": "alcohol (restaurant met bar)",
+    "CAKE": "alcohol (restaurant met bar)",
+    "BJRI": "alcohol (restaurant met bar)",
+    "DIN": "alcohol (restaurant met bar)",
+    "PLAY": "alcohol (restaurant met bar)",
+    "RRGB": "alcohol (restaurant met bar)",
+    "FWRG": "alcohol (restaurant met bar)",
+    "KRUS": "alcohol (restaurant met bar)",
+    "DENN": "alcohol (restaurant met bar)",
+    "CBRL": "alcohol (restaurant met bar)",
     "SLG": "rente (leningen- en preferred-portefeuille)",
     "STZ": "alcohol", "BF-A": "alcohol", "BF-B": "alcohol", "TAP": "alcohol", "DEO": "alcohol",
     "BUD": "alcohol", "SAM": "alcohol", "MGPI": "alcohol", "ABEV": "alcohol",
@@ -686,7 +701,7 @@ def apply_halal(state: dict) -> None:
     today = datetime.now(timezone.utc).date()
     fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
     halal = state.get("halal", {})
-    if state.get("halal_ver") != 7:
+    if state.get("halal_ver") != 8:
         fresh, halal = False, {}
     if fresh and all(t in halal for t in liquid):
         state["universe"] = halal_universe(liquid, halal)
@@ -717,7 +732,7 @@ def apply_halal(state: dict) -> None:
         sic = sic_cache.get(str(cik), [None])[0] if cik else None
         halal[t] = halal_reasons(t, sic, balances.get(cik) if cik else None,
                                  shares.get(cik) if cik else None, v.get("price"))
-    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 7
+    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 8
     state["universe"] = halal_universe(liquid, halal)
     for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
         reasons: dict[str, int] = {}
