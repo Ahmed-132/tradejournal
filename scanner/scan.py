@@ -1044,11 +1044,11 @@ def channel_message(t: dict, status: str) -> str | None:
     tk, e, sl, tp = t["ticker"], t["entry"], t["sl"], t["tp"]
     rr = (tp - e) / (e - sl)
     if status == "tp":
-        return (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {fmt(e)} → TP {fmt(tp)}\n"
-                f"R:R 1:{rr:.1f}\n\nHalal ✅ · Spot only · No leverage")
+        return (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {fmt(e)} → TP {fmt(tp)}\n\n"
+                f"Halal stocks only · Not financial advice")
     if status == "sl":
-        return (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {fmt(e)} → SL {fmt(sl)}\n"
-                f"Losses are part of the game. Risk managed, next setup.")
+        return (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {fmt(e)} → SL {fmt(sl)}\n\n"
+                f"Halal stocks only · Not financial advice")
     return None
 
 
