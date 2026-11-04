@@ -6,5 +6,7 @@
   {"ticker": "UTI", "market": "stock", "tf": "4H", "entry": 23.12, "sl": 19.74, "tp": 42.92, "posted": "2026-10-29T18:56:00Z"},
   {"ticker": "ACAD", "market": "stock", "tf": "4H", "entry": 20.2, "sl": 18.6, "tp": 28.06, "posted": "2026-11-01T18:01:00Z"},
   {"ticker": "RARE", "market": "stock", "tf": "4H", "entry": 16.29, "sl": 15.24, "tp": 26.54, "posted": "2026-11-03T08:25:00Z"},
-  {"ticker": "INTA", "market": "stock", "tf": "4H", "entry": 45.14, "sl": 33.22, "tp": 58.64, "posted": "2026-11-03T09:13:00Z"}
+  {"ticker": "INTA", "market": "stock", "tf": "4H", "entry": 45.14, "sl": 33.22, "tp": 58.64, "posted": "2026-11-03T09:13:00Z"},
+  {"ticker": "CALM", "market": "stock", "tf": "4H", "entry": 65.56, "sl": 59.53, "tp": 86.67, "posted": "2026-11-04T14:17:00Z"},
+  {"ticker": "ADSK", "market": "stock", "tf": "4H", "entry": 257.16, "sl": 246.85, "tp": 319.52, "posted": "2026-11-04T14:18:00Z"}
 ]

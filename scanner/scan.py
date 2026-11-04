@@ -121,6 +121,7 @@ HALAL_EXCLUDED_SIC = [
 ]
 # Bedrijven die de SIC-code niet vangt (bv. alcohol onder 'beverages', defensie).
 HALAL_EXCLUDED_TICKERS = {
+    "KRMN": "wapens/defensie (raketonderdelen)",
     # cannabis (recreatief)
     "TLRY": "cannabis",
     "CGC": "cannabis",
@@ -716,7 +717,7 @@ def apply_halal(state: dict) -> None:
     today = datetime.now(timezone.utc).date()
     fresh = state.get("halal_date", "") >= (today - timedelta(days=HALAL_REFRESH_DAYS)).isoformat()
     halal = state.get("halal", {})
-    if state.get("halal_ver") != 9:
+    if state.get("halal_ver") != 10:
         fresh, halal = False, {}
     if fresh and all(t in halal for t in liquid):
         state["universe"] = halal_universe(liquid, halal)
@@ -747,7 +748,7 @@ def apply_halal(state: dict) -> None:
         sic = sic_cache.get(str(cik), [None])[0] if cik else None
         halal[t] = halal_reasons(t, sic, balances.get(cik) if cik else None,
                                  shares.get(cik) if cik else None, v.get("price"))
-    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 9
+    state["halal"], state["halal_date"], state["halal_ver"] = halal, today.isoformat(), 10
     state["universe"] = halal_universe(liquid, halal)
     for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
         reasons: dict[str, int] = {}
