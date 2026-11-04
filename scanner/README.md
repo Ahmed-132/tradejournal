@@ -59,3 +59,15 @@ Mogelijke timeframes: `1h`, `2h`, `4h`, `1d`, `1w`. Het getal na `:` is hoeveel 
 - GitHub start geplande runs soms een paar minuten later dan gepland.
 - Instellingen (candles, prijs/volume-filter) staan bovenaan `scanner/scan.py`.
 - Lokaal testen: `pip install -r scanner/requirements.txt` en `python scanner/scan.py --dry-run`.
+
+## Setups posten via je bot
+
+Stuur je bot (privé) je screenshot met als bijschrift:
+
+```
+RARE 16.10-16.30 SL 15.24 TP 26.54
+```
+
+Bij de volgende run (binnen 30 minuten) controleert de scanner of de ticker halal is, post hij de setup in je Telegram-kanaal (en op X als de X-sleutels bestaan) en volgt hij de trade. TP of SL komt daarna automatisch als antwoord op die post.
+
+X: maak op developer.x.com een app met lees- en schrijfrechten en zet deze 4 waarden als GitHub-secrets: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET`.

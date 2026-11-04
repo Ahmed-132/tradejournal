@@ -13,6 +13,7 @@ Gebruik:
 
 from __future__ import annotations
 
+import html
 import io
 import json
 import os
@@ -626,12 +627,17 @@ def halal_reasons(ticker: str, sic: int | None, bal: dict[str, float] | None,
 
 def halal_check_report(tickers: list[str]) -> list[str]:
     """Controleert losse tickers en geeft per ticker een leesbaar resultaat (voor Telegram)."""
+    return [lines for _, lines in halal_results(tickers).values()]
+
+
+def halal_results(tickers: list[str]) -> dict[str, tuple[dict[str, str], str]]:
+    """Per ticker: (uitkomst per methode, leesbare uitleg)."""
     tickers = [t.strip().upper().replace(".", "-") for t in tickers if t.strip()]
     closes = {t: float(df["close"].iloc[-1]) for t, df in yahoo_download(tickers, "1mo", "1d").items()}
     rows = sec_get("https://www.sec.gov/files/company_tickers.json") or {}
     cik_of = {r["ticker"].upper().replace(".", "-"): int(r["cik_str"]) for r in rows.values()}
     balances, shares = sec_balances(), sec_shares()
-    out = []
+    out = {}
     for t in tickers:
         cik = cik_of.get(t)
         sub = sec_get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json") if cik else {}
@@ -651,7 +657,7 @@ def halal_check_report(tickers: list[str]) -> list[str]:
         for key, name in (("aaoifi", "AAOIFI"), ("msci", "MSCI")):
             why = res[key]
             lines.append(f"{name}: {'✅ halal' if not why else '❌ ' + why}")
-        out.append("\n".join(lines))
+        out[t] = (res, "\n".join(lines))
         time.sleep(0.12)
     return out
 
@@ -1016,7 +1022,7 @@ def trade_messages(t: dict, status: str) -> str:
     tk, e, sl, tp = t["ticker"], t["entry"], t["sl"], t["tp"]
     rr = (tp - e) / (e - sl)
     if status == "open":
-        return f"🟢 <b>{tk}</b> entry {fmt(e)} geraakt, de trade loopt nu (SL {fmt(sl)} · TP {fmt(tp)})."
+        return f"🟢 <b>{tk}</b> entry {entry_text(t)} geraakt, de trade loopt nu (SL {fmt(sl)} · TP {fmt(tp)})."
     if status == "missed":
         return (f"⏭️ <b>{tk}</b> ging naar TP {fmt(tp)} zonder je entry {fmt(e)} te raken. "
                 f"Trade vervalt, niets te posten.")
@@ -1024,12 +1030,12 @@ def trade_messages(t: dict, status: str) -> str:
         return (f"⏭️ <b>{tk}</b> raakte de SL {fmt(sl)} zonder je entry {fmt(e)} te raken. "
                 f"Trade vervalt, niets te posten.")
     if status == "tp":
-        post = (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {fmt(e)} → TP {fmt(tp)}\n"
+        post = (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {entry_text(t)} → TP {fmt(tp)}\n"
                 f"R:R 1:{rr:.1f}")
         tv = f"Update: {tk} reached the take profit at {fmt(tp)} ({pct(e, tp)}). Trade closed ✅"
         head = f"🎯 <b>{tk} TP geraakt</b> ({pct(e, tp)})"
     else:
-        post = (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {fmt(e)} → SL {fmt(sl)}\n"
+        post = (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {entry_text(t)} → SL {fmt(sl)}\n"
                 f"Losses are part of the game. Risk managed, next setup.")
         tv = f"Update: {tk} hit the stop loss at {fmt(sl)} ({pct(e, sl)}). Trade closed ❌"
         head = f"🛑 <b>{tk} SL geraakt</b> ({pct(e, sl)})"
@@ -1040,15 +1046,21 @@ def trade_messages(t: dict, status: str) -> str:
 TELEGRAM_CHANNEL = (os.environ.get("TELEGRAM_CHANNEL") or "@halaltradingandinvest").strip()
 
 
+def entry_text(t: dict) -> str:
+    if t.get("entry_lo") is not None and t.get("entry_hi") is not None and t["entry_lo"] != t["entry_hi"]:
+        return f"{fmt(t['entry_lo'])} – {fmt(t['entry_hi'])}"
+    return fmt(t["entry"])
+
+
 def channel_message(t: dict, status: str) -> str | None:
     """Resultaat zoals het in je openbare kanaal komt (alleen bij TP of SL)."""
     tk, e, sl, tp = t["ticker"], t["entry"], t["sl"], t["tp"]
     rr = (tp - e) / (e - sl)
     if status == "tp":
-        return (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {fmt(e)} → TP {fmt(tp)}\n\n"
+        return (f"✅ ${tk} — TP hit {pct(e, tp)}\n\nEntry {entry_text(t)} → TP {fmt(tp)}\n\n"
                 f"Halal stocks only · Not financial advice")
     if status == "sl":
-        return (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {fmt(e)} → SL {fmt(sl)}\n\n"
+        return (f"❌ ${tk} — SL hit {pct(e, sl)}\n\nEntry {entry_text(t)} → SL {fmt(sl)}\n\n"
                 f"Halal stocks only · Not financial advice")
     return None
 
@@ -1071,7 +1083,8 @@ def check_trades(state: dict) -> list[tuple[str | None, dict, str, str]]:
     try:
         trades = json.loads(TRADES_FILE.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
-        return []
+        trades = []
+    trades = trades + state.get("inbox_trades", [])
     book = state.setdefault("trades", {})
     out = []
     for t in trades:
@@ -1095,16 +1108,17 @@ def check_trades(state: dict) -> list[tuple[str | None, dict, str, str]]:
         if df is None or df.empty:
             continue
         e, sl, tp = t["entry"], t["sl"], t["tp"]
+        lo_e, hi_e = t.get("entry_lo", e), t.get("entry_hi", e)
         above = st.get("above")
         if above is None:  # lag de koers boven of onder de entry toen je postte?
-            above = bool(df["open"].iloc[0] > e)
+            above = bool(df["open"].iloc[0] > hi_e)
             st["above"] = above
         for ts, bar in df.iterrows():
             if str(ts) <= st.get("seen", ""):
                 continue
             hi, lo = bar["high"], bar["low"]
             if st["status"] == "pending":
-                if (lo <= e) if above else (hi >= e):
+                if (lo <= hi_e) if above else (hi >= lo_e):
                     st["status"], st["filled"] = "open", str(ts)
                     out.append((trade_messages(t, "open"), t, "open", tid))
                 elif hi >= tp:
@@ -1123,6 +1137,165 @@ def check_trades(state: dict) -> list[tuple[str | None, dict, str, str]]:
         st["seen"] = str(df.index[-2]) if len(df) > 1 else st.get("seen", "")  # laatste candle loopt nog
         book[tid] = st
         log(f"Trade {t['ticker']}: {st['status']}")
+    return out
+
+
+
+# ------------------------------------------------- setups via je bot + automatisch posten
+
+SETUP_RE = re.compile(
+    r"^\$?([A-Za-z][A-Za-z.\-]{0,11})\s+([\d.,]+)\s*(?:(?:-|–|—|tot|to)\s*([\d.,]+))?\s+"
+    r"SL\s*:?\s*([\d.,]+)\s+TP\s*:?\s*([\d.,]+)$", re.I)
+SETUP_HELP = ("Stuur je setup zo (met screenshot, dit als bijschrift):\n"
+              "<code>RARE 16.10-16.30 SL 15.24 TP 26.54</code>\n"
+              "Eén entry mag ook: <code>RARE 16.29 SL 15.24 TP 26.54</code>")
+
+
+def tg_api(method: str, **kw):
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    r = http.post(f"https://api.telegram.org/bot{token}/{method}", timeout=60, **kw)
+    if not r.ok:
+        log(f"Telegram {method} mislukt: {r.status_code} {r.text[:200]}")
+        return None
+    return r.json().get("result")
+
+
+def parse_setup(text: str) -> dict | None:
+    m = SETUP_RE.match(" ".join(text.split()))
+    if not m:
+        return None
+    num = lambda x: float(x.replace(",", "."))
+    t, a, b, sl, tp = m.groups()
+    lo, hi = sorted((num(a), num(b) if b else num(a)))
+    t = t.upper().replace(".", "-")
+    return {"ticker": t, "market": "crypto" if t.endswith("USDT") else "stock", "tf": "4H",
+            "entry": round((lo + hi) / 2, 6), "entry_lo": lo, "entry_hi": hi,
+            "sl": num(sl), "tp": num(tp)}
+
+
+def setup_caption(t: dict) -> str:
+    return (f"${t['ticker']} {t['tf']}\n\nEntry: {entry_text(t)}\nSL: {fmt(t['sl'])}\n"
+            f"TP: {fmt(t['tp'])}\n\nHalal stocks only · Not financial advice")
+
+
+def setup_halal(t: dict, state: dict) -> tuple[bool, str]:
+    if t["market"] == "crypto":
+        base = t["ticker"][:-4]
+        if base in CRYPTO_EXCLUDED or base in STABLECOINS:
+            return False, f"{base} staat op de uitsluitlijst (rente/gokken/meme)"
+        return True, ""
+    res = (state.get("halal") or {}).get(t["ticker"])
+    if not isinstance(res, dict):
+        try:
+            res = halal_results([t["ticker"]]).get(t["ticker"], (None, ""))[0]
+        except Exception as e:
+            return False, f"halal-check mislukt ({e})"
+    if not isinstance(res, dict):
+        return False, "geen gegevens gevonden om de halal-check te doen"
+    if halal_pass(res):
+        return True, ""
+    return False, " · ".join(f"{n}: {res[k]}" for k, n in (("aaoifi", "AAOIFI"), ("msci", "MSCI")) if res.get(k))
+
+
+X_KEYS = ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET")
+
+
+def x_post(text: str, image: bytes | None = None, reply_to: str | None = None) -> str | None:
+    """Post op X (alleen als de 4 sleutels als GitHub-secrets bestaan). Geeft het post-id terug."""
+    if not all(os.environ.get(k) for k in X_KEYS):
+        return None
+    try:
+        from requests_oauthlib import OAuth1
+    except ImportError:
+        log("X: requests-oauthlib ontbreekt")
+        return None
+    auth = OAuth1(*(os.environ[k] for k in X_KEYS))
+    body: dict = {"text": text[:280]}
+    if image:
+        media_id = None
+        for url, key in (("https://api.x.com/2/media/upload", "id"),
+                         ("https://upload.twitter.com/1.1/media/upload.json", "media_id_string")):
+            try:
+                r = requests.post(url, auth=auth, timeout=60, files={"media": ("chart.png", image)},
+                                  data={"media_category": "tweet_image"})
+                if r.ok:
+                    j = r.json()
+                    media_id = (j.get("data") or j).get(key)
+                    if media_id:
+                        break
+                log(f"X media-upload ({url}) mislukt: {r.status_code} {r.text[:200]}")
+            except requests.RequestException as e:
+                log(f"X media-upload fout: {e}")
+        if media_id:
+            body["media"] = {"media_ids": [str(media_id)]}
+    if reply_to:
+        body["reply"] = {"in_reply_to_tweet_id": str(reply_to)}
+    try:
+        r = requests.post("https://api.x.com/2/tweets", auth=auth, json=body, timeout=30)
+    except requests.RequestException as e:
+        log(f"X post fout: {e}")
+        return None
+    if not r.ok:
+        log(f"X post mislukt: {r.status_code} {r.text[:300]}")
+        return None
+    return r.json().get("data", {}).get("id")
+
+
+def process_inbox(state: dict) -> list[str]:
+    """Leest setups die je naar je bot stuurt, post ze in je kanaal (en op X) en volgt ze."""
+    me = os.environ.get("TELEGRAM_CHAT_ID")
+    if not os.environ.get("TELEGRAM_BOT_TOKEN") or not me:
+        return []
+    first = "tg_offset" not in state
+    upd = tg_api("getUpdates", json={"offset": state.get("tg_offset", 0), "timeout": 0,
+                                     "allowed_updates": ["message"]}) or []
+    out = []
+    for u in upd:
+        state["tg_offset"] = u["update_id"] + 1
+        m = u.get("message") or {}
+        if first or str(m.get("chat", {}).get("id")) != str(me):
+            continue  # oude berichten bij de eerste keer, of iemand anders
+        text = (m.get("caption") or m.get("text") or "").strip()
+        if not text or text.startswith("/"):
+            continue
+        t = parse_setup(text)
+        if not t:
+            out.append(f"❓ Ik begrijp \"{html.escape(text[:60])}\" niet.\n\n{SETUP_HELP}")
+            continue
+        if not (t["sl"] < t["entry_lo"] <= t["entry_hi"] < t["tp"]):
+            out.append(f"❓ {t['ticker']}: SL moet onder de entry liggen en TP erboven. Niets gepost.")
+            continue
+        ok, why = setup_halal(t, state)
+        if not ok:
+            out.append(f"⛔ <b>{t['ticker']}</b> is niet halal volgens de filter, niets gepost.\n{why}")
+            continue
+        caption = setup_caption(t)
+        photo = (m.get("photo") or [None])[-1]
+        image = None
+        if photo:
+            sent = tg_api("sendPhoto", json={"chat_id": TELEGRAM_CHANNEL, "photo": photo["file_id"],
+                                             "caption": caption})
+            f = tg_api("getFile", json={"file_id": photo["file_id"]})
+            if f and f.get("file_path"):
+                try:
+                    r = http.get(f"https://api.telegram.org/file/bot{os.environ['TELEGRAM_BOT_TOKEN']}/"
+                                 f"{f['file_path']}", timeout=60)
+                    image = r.content if r.ok else None
+                except requests.RequestException:
+                    image = None
+        else:
+            sent = tg_api("sendMessage", json={"chat_id": TELEGRAM_CHANNEL, "text": caption})
+        t["posted"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if sent:
+            t["tg_msg"] = sent.get("message_id")
+        x_id = x_post(caption, image)
+        if x_id:
+            t["x_id"] = x_id
+        state.setdefault("inbox_trades", []).append(t)
+        where = ["je Telegram-kanaal" if sent else None, "X" if x_id else None]
+        where = " en ".join(w for w in where if w)
+        out.append(f"✅ <b>{t['ticker']}</b> " + (f"gepost op {where}" if where else "NIET gepost (fout)")
+                   + f" en toegevoegd aan de tracker.\nEntry {entry_text(t)} · SL {fmt(t['sl'])} · TP {fmt(t['tp'])}")
     return out
 
 
@@ -1276,6 +1449,12 @@ def main() -> int:
     for m in messages:
         log(m.replace("\n", " | "))
 
+    inbox_msgs: list[str] = []
+    if not dry_run:
+        try:
+            inbox_msgs = process_inbox(state)
+        except Exception as e:
+            log(f"Inbox mislukt: {e}")
     try:
         trade_msgs = check_trades(state)
     except Exception as e:
@@ -1289,6 +1468,8 @@ def main() -> int:
         return 0
     if new:
         send_alerts(new)
+    for m in inbox_msgs:
+        send_telegram([m])
     for m, t, status, tid in trade_msgs:
         pub = channel_message(t, status)
         posted = bool(pub) and send_channel(pub, t.get("tg_msg"))
@@ -1297,6 +1478,8 @@ def main() -> int:
             if m is None:  # eerder gesloten, nu alsnog gepost
                 m = trade_messages(t, status)
             m += "\n\n📢 Automatisch gepost in je Telegram-kanaal."
+            if x_post(pub, None, t.get("x_id")):
+                m += " Ook op X."
         if m:
             send_telegram([m])
 
