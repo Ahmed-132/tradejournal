@@ -1075,8 +1075,13 @@ def check_trades(state: dict) -> list[tuple[str | None, dict, str, str]]:
     book = state.setdefault("trades", {})
     out = []
     for t in trades:
-        tid = f"{t['ticker']}|{t['posted']}"
+        tid = f"{t['ticker']}|{t['posted']}" + (f"|v{t['v']}" if t.get("v") else "")
+        sig = f"{t['entry']}|{t['sl']}|{t['tp']}"
         st = book.get(tid, {"status": "pending"})
+        if st.get("sig", sig) != sig:  # entry/SL/TP aangepast: opnieuw berekenen
+            log(f"Trade {t['ticker']}: niveaus aangepast, opnieuw berekend")
+            st = {"status": "pending"}
+        st["sig"] = sig
         if st["status"] not in ("pending", "open"):
             if st["status"] in ("tp", "sl") and not st.get("public"):
                 out.append((None, t, st["status"], tid))  # resultaat nog niet in het kanaal
