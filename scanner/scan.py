@@ -234,8 +234,6 @@ RETEST_MAX_BARS = 20  # retest + terug boven de lijn moet binnen zoveel candles 
 def find_retest(df: pd.DataFrame, length: int) -> dict | None:
     """Break + retest: de prijs sluit boven een vorige top, zakt daarna met een slot ONDER die
     gebroken top (retest) en sluit daarna weer BOVEN de lijn -> melding.
-    Ook goed: een GROENE candle met een wick onder de lijn die boven de lijn sluit (wick-retest).
-    Een rode wick-candle telt niet.
     - Was de gebroken top een Lower High (lager dan de top ervoor)? Dan is het een
       trendomkeer (🔔). Anders een retest in een bestaande uptrend (🔁).
     - De retest mag niet onder de laatste bodem vóór de break zakken (anders is de structuur kapot).
@@ -243,7 +241,6 @@ def find_retest(df: pd.DataFrame, length: int) -> dict | None:
     n = len(df)
     if n < 4 * length + 4:
         return None
-    o = df["open"].to_numpy(float)
     h = df["high"].to_numpy(float)
     l = df["low"].to_numpy(float)
     c = df["close"].to_numpy(float)
@@ -256,15 +253,10 @@ def find_retest(df: pd.DataFrame, length: int) -> dict | None:
         if not above:
             continue
         b = above[0]                                    # break: eerste slot boven de top
-        # Retest: (a) een slot onder de lijn en daarna een slot erboven, of
-        # (b) een groene candle met een wick onder de lijn die boven de lijn sluit.
+        # Retest: een slot onder de lijn en daarna een slot erboven
         r = rc = None
         wick = False
         for i in range(b + 1, n):
-            if r is None and l[i] < level < c[i] and c[i] > o[i]:
-                r = rc = i
-                wick = True
-                break
             if r is None and c[i] < level:
                 r = i
             elif r is not None and c[i] > level:
